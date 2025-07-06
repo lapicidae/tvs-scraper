@@ -1,0 +1,183 @@
+#!/bin/bash
+
+set -euo pipefail
+
+epgdConf='/epgd/config/epgd.conf'
+chMap='/epgd/config/channelmap.conf'
+cacheDir='/epgd/cache/tvs-xmltv'
+xmltv_tld='tvs'
+
+# Default syslog tag for the bash script itself
+SYSLOG_BASH_TAG="${SYSLOG_BASH_TAG:-scraper}"
+# Flag to control if bash script output goes to syslog
+USE_SYSLOG_BASH="${USE_SYSLOG_BASH:-true}"
+
+# Joins array elements with a separator
+join() {
+	local IFS="$1"
+	shift
+	printf "%s" "$1"
+	shift
+	for arg in "$@"; do
+		printf "%s%s" "$IFS" "$arg"
+	done
+}
+
+# Function to print messages, optionally to syslog
+# Usage: log_message "Error: Something went wrong" >&2
+# Usage: log_message "Info: Processing data"
+log_message() {
+	local format="$1"; shift
+	local formatted="$format"
+
+	for arg in "$@"; do
+		formatted="${formatted/\%s/$arg}"
+	done
+
+	if [ "$USE_SYSLOG_BASH" = true ]; then
+		logger -t "$SYSLOG_BASH_TAG" "$formatted"
+	else
+		printf '%s\n' "$formatted"
+	fi
+}
+
+# Parse command-line arguments for the bash script itself
+# This allows controlling the bash script's logging behavior
+while [[ "$#" -gt 0 ]]; do
+	case "$1" in
+		--disable-syslog)
+			USE_SYSLOG_BASH=false
+			shift
+			;;
+		--syslog-ident)
+			SYSLOG_BASH_TAG="$2"
+			shift
+			shift
+			;;
+		*)
+			break
+			;;
+	esac
+done
+
+# Store remaining arguments to pass to the Python script
+PYTHON_SCRIPT_ARGS=("$@")
+
+
+# Check config file
+if [ ! -f "$epgdConf" ]; then
+  log_message "Error: Configuration file '%s' not found." "$epgdConf" >&2
+  exit 1
+fi
+
+# Extract 'xmltv.input' value
+# The sed command has been adjusted to extract only the path, without "xmltv.input = "
+raw_outFile_value=$(grep -E '^[[:space:]]*xmltv.input[[:space:]]*=' "$epgdConf" | \
+					sed -E 's/^[[:space:]]*xmltv.input[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/' | \
+					tail -n 1)
+
+outFile="${raw_outFile_value:-/epgd/cache/tvs_xmltv.xml}"
+
+log_message "Using output file: %s" "$outFile"
+
+# Check if output directory exists and is writable
+output_dir=$(dirname "${outFile}")
+
+if [ ! -d "$output_dir" ]; then
+	log_message "Warning: Output directory '%s' does not exist and is being created." "$output_dir" >&2
+	mkdir -p "$cacheDir"
+elif [ ! -w "$output_dir" ]; then
+	log_message "Error: Output directory '%s' is not writable." "$output_dir" >&2
+	exit 1
+fi
+
+# Check if output file exists and is writable, or if it can be created
+if [ -f "$outFile" ] && [ ! -w "$outFile" ]; then
+	log_message "Error: Output file '%s' exists but is not writable." "$outFile" >&2
+	exit 1
+fi
+
+# Check if cache directory exists and is writable
+if [ ! -d "$cacheDir" ]; then
+	log_message "Warning: The cache directory '%s' does not exist and is being created." "$cacheDir" >&2
+	mkdir -p "$cacheDir"
+fi
+if [ ! -w "$cacheDir" ]; then
+	log_message "Error: Cache directory '%s' is not writable." "$cacheDir" >&2
+	exit 1
+fi
+
+# Extract 'DaysInAdvance' value
+declare -i days
+
+raw_days_value=$(grep -E '^[[:space:]]*DaysInAdvance[[:space:]]*=' "$epgdConf" | \
+				 sed -E 's/^[[:space:]]*DaysInAdvance[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
+				 tail -n 1)
+
+days="${raw_days_value:-6}"
+
+log_message "Using DaysInAdvance: %s" "$days"
+
+# Extract 'UpdateTime' value
+declare -i UpdateTime
+
+raw_UpdateTime_value=$(grep -E '^[[:space:]]*UpdateTime[[:space:]]*=' "$epgdConf" | \
+					   sed -E 's/^[[:space:]]*UpdateTime[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
+				 	   tail -n 1)
+
+UpdateTime="${raw_UpdateTime_value:-24}"
+
+log_message "Using UpdateTime: %s" "$UpdateTime"
+
+# Calculate minutes for find command
+declare -i UpdateTimeMinutes
+UpdateTimeMinutes=$((UpdateTime * 60))
+
+# By default, we assume an update is NOT needed.
+update_needed=false
+
+# 1. Condition: Does the output file NOT exist? Then an update is needed.
+if [ ! -f "$outFile" ]; then
+	log_message "Output file '%s' does not exist. Update needed." "$outFile"
+	update_needed=true
+# 2. Condition: Does the output file exist, but is it older than 'UpdateTime' hours?
+#    -mmin +X checks if the file is OLDER than X minutes.
+elif find "$outFile" -mmin +"$UpdateTimeMinutes" -print -quit | grep -q .; then
+	log_message "'%s' is older than %s hours. Update needed." "$outFile" "$UpdateTime"
+	update_needed=true
+# 3. Condition: Is the mapping file newer than the output file?
+#    This is important to react to mapping changes.
+elif [ "$chMap" -nt "$outFile" ]; then
+	log_message "Mapping file '%s' is newer than output file '%s'. Update needed." "$chMap" "$outFile"
+	update_needed=true
+else
+	# None of the conditions for an update are met.
+	log_message "Output file '%s' is up-to-date and mapping unchanged. No update needed." "$outFile"
+fi
+
+# Extract channel IDs
+if [ ! -f "$chMap" ]; then
+	log_message "Error: Channel map file '%s' not found." "$chMap" >&2
+	exit 1
+fi
+
+mapfile -t channel_ids_array < <(grep '^xmltv:' "$chMap" | sed -E "s/^xmltv:([^.]+)\\.${xmltv_tld}.*$/\\1/")
+
+# Join channel IDs with a comma
+joined_channel_ids=""
+if [ "${#channel_ids_array[@]}" -gt 0 ]; then
+	joined_channel_ids=$(join ',' "${channel_ids_array[@]}")
+fi
+
+# Execute tvs-scraper if an update is needed and channel IDs are found
+if [ "$update_needed" = true ]; then
+	if [ -n "$joined_channel_ids" ]; then
+		log_message "Executing tvs-scraper for IDs: %s" "${joined_channel_ids}"
+		# Pass all remaining arguments from the bash script's command line to the python script.
+		/usr/local/bin/tvs-scraper --channel-ids "${joined_channel_ids}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-syslog --log-syslog-tag scraper --log-level INFO "${PYTHON_SCRIPT_ARGS[@]}"
+	else
+		log_message "No XMLTV channel IDs found in '%s'. tvs-scraper will not be executed." "$chMap"
+	fi
+else
+	log_message "Skipping tvs-scraper execution as no update is needed."
+fi
