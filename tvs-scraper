@@ -232,7 +232,7 @@ class TvsHtmlParser:
             if link.text_content():
                 name = _sanitize_xml_string(link.text_content().strip())
             else:
-                logger.warning(f"Channel link found with no text content for href: {href}. Skipping.")
+                logger.debug(f"Channel link found with no text content for href: {href}. Skipping.")
                 continue
 
             source_id: Optional[str] = None
@@ -258,7 +258,7 @@ class TvsHtmlParser:
                     'source_id': source_id
                 })
             else:
-                logger.warning(f"Could not extract source_id for channel: {name} (Href: {href}). Skipping.")
+                logger.debug(f"Could not extract source_id for channel: {name} (Href: {href}). Skipping.")
         return channel_data
 
     def parse_daily_schedule_items(self, html_content: str, channel_info: Dict[str, str], current_date: datetime.date) -> List[Dict[str, Any]]:
@@ -295,14 +295,14 @@ class TvsHtmlParser:
             if data_start_time:
                 item_data['starttime'] = data_start_time
             else:
-                logger.warning(f"Missing 'data-start-time' for an item in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}. Skipping item.")
+                logger.debug(f"Missing 'data-start-time' for an item in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}. Skipping item.")
                 continue
 
             data_end_time = li_element.get('data-end-time')
             if data_end_time:
                 item_data['endtime'] = data_end_time
             else:
-                logger.warning(f"Missing 'data-end-time' for item starting at {item_data['starttime']} in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
+                logger.debug(f"Missing 'data-end-time' for item starting at {item_data['starttime']} in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
                 item_data['endtime'] = None
 
             title_tag: List[lxml.html.HtmlElement] = self.selector_title_tag(li_element)
@@ -354,6 +354,31 @@ class TvsHtmlParser:
             extracted_items.append(item_data)
         return extracted_items
 
+    def _get_detail_sections(self, root: lxml.html.HtmlElement) -> Dict[str, Optional[lxml.html.HtmlElement]]:
+        """
+        Parses the detail sections (Infos, Cast, Crew) from the HTML root once
+        and returns them in a dictionary for efficient access.
+
+        :param root: The lxml HTML root element.
+        :type root: lxml.html.HtmlElement
+        :returns: A dictionary mapping section headlines to their corresponding dl elements.
+        :rtype: Dict[str, Optional[lxml.html.HtmlElement]]
+        """
+        sections: Dict[str, Optional[lxml.html.HtmlElement]] = {
+            'Infos': None,
+            'Cast': None,
+            'Crew': None
+        }
+        for container_elem in self.base_detail_list_container(root):
+            headline_p_elements = self.selector_headline_p(container_elem)
+            if headline_p_elements and headline_p_elements[0].text_content():
+                headline = headline_p_elements[0].text_content().strip()
+                if headline in sections:
+                    dl_elements = self.selector_dl(container_elem)
+                    if dl_elements:
+                        sections[headline] = dl_elements[0]
+        return sections
+
     def _extract_description(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
         """
         Extracts short and long descriptions from the HTML root.
@@ -368,20 +393,14 @@ class TvsHtmlParser:
             short_desc_tag: List[lxml.html.HtmlElement] = self.selector_short_desc_tag(description_section[0])
             if short_desc_tag and short_desc_tag[0].text_content():
                 detail_data['shortdescription'] = _sanitize_xml_string(short_desc_tag[0].text_content().strip())
-            else:
-                logger.debug("Short description tag not found or empty.")
 
             long_desc_paragraphs: List[lxml.html.HtmlElement] = self.selector_long_desc_paragraphs(description_section[0])
             if long_desc_paragraphs:
                 cleaned_paragraphs = [p.text_content().strip() for p in long_desc_paragraphs if p.text_content().strip()]
                 if cleaned_paragraphs:
                     detail_data['longdescription'] = _sanitize_xml_string("\n".join(cleaned_paragraphs))
-            else:
-                logger.debug("Long description paragraphs not found or empty.")
-        else:
-            logger.debug("Description section not found.")
-
-    def _extract_genre_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
+        
+    def _extract_genre_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
         Extracts genre information from the HTML root.
 
@@ -389,6 +408,8 @@ class TvsHtmlParser:
         :type root: lxml.html.HtmlElement
         :param detail_data: The dictionary to update with extracted data.
         :type detail_data: Dict[str, Any]
+        :param detail_sections: Pre-parsed dictionary of detail sections.
+        :type detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]
         """
         genre_underline_tag: List[lxml.html.HtmlElement] = self.selector_genre_underline_tag(root)
         if genre_underline_tag and genre_underline_tag[0].text_content():
@@ -398,32 +419,22 @@ class TvsHtmlParser:
                 detail_data['genre'] = _sanitize_xml_string(genre_match.group(1).strip())
             else:
                 detail_data['genre'] = _sanitize_xml_string(genre_text.strip())
-        else:
-            logger.debug("Genre underline tag not found or empty.")
 
         if not detail_data.get('genre'):
-            for infos_container_elem in self.base_detail_list_container(root):
-                headline_p_elements: List[lxml.html.HtmlElement] = self.selector_headline_p(infos_container_elem)
-                if headline_p_elements and headline_p_elements[0].text_content().strip() == "Infos":
-                    for dt_element in self.selector_dt(infos_container_elem):
-                        if dt_element.text_content().strip() == "Genre":
-                            genre_dd: Optional[lxml.html.HtmlElement] = dt_element.getnext()
-                            if genre_dd and genre_dd.text_content():
-                                detail_data['genre'] = _sanitize_xml_string(genre_dd.text_content().strip())
-                                break
-                            else:
-                                logger.debug("Genre DD tag not found or empty after 'Genre' DT tag.")
-                    if detail_data.get('genre'):
-                        break
-                else:
-                    logger.debug("Information headline not found for genre extraction.")
+            infos_dl = detail_sections.get('Infos')
+            if infos_dl:
+                for dt_element in self.selector_dt(infos_dl):
+                    if dt_element.text_content().strip() == "Genre":
+                        genre_dd: Optional[lxml.html.HtmlElement] = dt_element.getnext()
+                        if genre_dd and genre_dd.text_content():
+                            detail_data['genre'] = _sanitize_xml_string(genre_dd.text_content().strip())
+                            break
 
         if not detail_data.get('genre'):
             genre_tag_general: List[lxml.html.HtmlElement] = self.selector_genre_tag_general(root)
             if genre_tag_general and genre_tag_general[0].text_content():
                 detail_data['genre'] = _sanitize_xml_string(genre_tag_general[0].text_content().strip())
             else:
-                logger.debug("General genre tag not found or empty.")
                 genre_time_tag_schedule: List[lxml.html.HtmlElement] = self.selector_genre_time_tag_schedule(root)
                 if genre_time_tag_schedule and genre_time_tag_schedule[0].text_content():
                     genre_match = self.re_genre_pipe_match.search(genre_time_tag_schedule[0].text_content().strip())
@@ -431,10 +442,8 @@ class TvsHtmlParser:
                         detail_data['genre'] = _sanitize_xml_string(genre_match.group(1).strip())
                     else:
                         detail_data['genre'] = _sanitize_xml_string(genre_time_tag_schedule[0].text_content().strip())
-                else:
-                    logger.debug("Schedule genre time tag not found or empty.")
 
-    def _extract_general_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
+    def _extract_general_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
         Extracts general information (original title, country, year, duration, parental rating)
         from the HTML root.
@@ -443,49 +452,41 @@ class TvsHtmlParser:
         :type root: lxml.html.HtmlElement
         :param detail_data: The dictionary to update with extracted data.
         :type detail_data: Dict[str, Any]
+        :param detail_sections: Pre-parsed dictionary of detail sections.
+        :type detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]
         """
-        for infos_container_elem in self.base_detail_list_container(root):
-            headline_p_elements = self.selector_headline_p(infos_container_elem)
-            if headline_p_elements and headline_p_elements[0].text_content().strip() == "Infos":
-                infos_dl: List[lxml.html.HtmlElement] = self.selector_dl(infos_container_elem)
-                if infos_dl:
-                    dt_elements: List[lxml.html.HtmlElement] = self.selector_dt(infos_dl[0])
-                    dd_elements: List[lxml.html.HtmlElement] = self.selector_dd(infos_dl[0])
-                    for dt, dd in zip(dt_elements, dd_elements):
-                        dt_text: str = dt.text_content().strip()
-                        dd_text: str = dd.text_content().strip()
-                        if dd_text:
-                            if dt_text == 'Originaltitel':
-                                detail_data['original_title'] = _sanitize_xml_string(dd_text)
-                            elif dt_text == 'Land':
-                                detail_data['country'] = _sanitize_xml_string(dd_text)
-                            elif dt_text == 'Jahr':
-                                try:
-                                    detail_data['year'] = int(dd_text)
-                                except ValueError:
-                                    logger.warning(f"Could not parse year from '{dd_text}'.")
-                            elif dt_text == 'Länge':
-                                duration_minutes_match: Optional[re.Match[str]] = self.re_duration_minutes_match.search(dd_text)
-                                if duration_minutes_match:
-                                    detail_data['duration'] = int(duration_minutes_match.group(1)) * 60
-                                else:
-                                    logger.warning(f"Could not parse duration from '{dd_text}'.")
-                            elif dt_text == 'FSK':
-                                fsk_match: Optional[re.Match[str]] = self.re_fsk_match.search(dd_text)
-                                if fsk_match:
-                                    try:
-                                        detail_data['parentalrating'] = int(fsk_match.group(1))
-                                    except ValueError:
-                                        logger.warning(f"Could not parse FSK rating from '{fsk_match.group(1)}'.")
+        infos_dl = detail_sections.get('Infos')
+        if infos_dl:
+            dt_elements: List[lxml.html.HtmlElement] = self.selector_dt(infos_dl)
+            dd_elements: List[lxml.html.HtmlElement] = self.selector_dd(infos_dl)
+            for dt, dd in zip(dt_elements, dd_elements):
+                dt_text: str = dt.text_content().strip()
+                dd_text: str = dd.text_content().strip()
+                if dd_text:
+                    if dt_text == 'Originaltitel':
+                        detail_data['original_title'] = _sanitize_xml_string(dd_text)
+                    elif dt_text == 'Land':
+                        detail_data['country'] = _sanitize_xml_string(dd_text)
+                    elif dt_text == 'Jahr':
+                        try:
+                            detail_data['year'] = int(dd_text)
+                        except ValueError:
+                            logger.debug(f"Could not parse year from '{dd_text}'.")
+                    elif dt_text == 'Länge':
+                        duration_minutes_match: Optional[re.Match[str]] = self.re_duration_minutes_match.search(dd_text)
+                        if duration_minutes_match:
+                            detail_data['duration'] = int(duration_minutes_match.group(1)) * 60
                         else:
-                            logger.debug(f"Empty DD tag found for DT: '{dt_text}'.")
-                else:
-                    logger.debug("Information DL tag not found.")
-                break
-            else:
-                logger.debug("Information headline not found for general info extraction.")
+                            logger.debug(f"Could not parse duration from '{dd_text}'.")
+                    elif dt_text == 'FSK':
+                        fsk_match: Optional[re.Match[str]] = self.re_fsk_match.search(dd_text)
+                        if fsk_match:
+                            try:
+                                detail_data['parentalrating'] = int(fsk_match.group(1))
+                            except ValueError:
+                                logger.debug(f"Could not parse FSK rating from '{fsk_match.group(1)}'.")
 
-    def _extract_cast_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
+    def _extract_cast_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
         Extracts cast information from the HTML root.
 
@@ -493,30 +494,23 @@ class TvsHtmlParser:
         :type root: lxml.html.HtmlElement
         :param detail_data: The dictionary to update with extracted data.
         :type detail_data: Dict[str, Any]
+        :param detail_sections: Pre-parsed dictionary of detail sections.
+        :type detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]
         """
-        for cast_container_elem in self.base_detail_list_container(root):
-            headline_p_elements = self.selector_headline_p(cast_container_elem)
-            if headline_p_elements and headline_p_elements[0].text_content().strip() == "Cast":
-                cast_list: List[str] = []
-                cast_dl: List[lxml.html.HtmlElement] = self.selector_dl(cast_container_elem)
-                if cast_dl:
-                    for dt_tag in self.selector_dt(cast_dl[0]):
-                        role: str = dt_tag.text_content().strip()
-                        actor_dd_tag: Optional[lxml.html.HtmlElement] = dt_tag.getnext()
-                        if actor_dd_tag is not None and actor_dd_tag.text_content():
-                            actor_name: str = actor_dd_tag.text_content().strip()
-                            if actor_name:
-                                cast_list.append(_sanitize_xml_string(f"{actor_name} ({role})" if role else actor_name) or "")
-                        else:
-                            logger.debug(f"Actor DD tag not found or empty for role '{role}'.")
-                else:
-                    logger.debug("Cast DL tag not found.")
-                detail_data['cast'] = ", ".join(cast_list) if cast_list else None
-                break
-            else:
-                logger.debug("Cast headline not found for cast info extraction.")
+        cast_dl = detail_sections.get('Cast')
+        if cast_dl:
+            cast_list: List[str] = []
+            for dt_tag in self.selector_dt(cast_dl):
+                role: str = dt_tag.text_content().strip()
+                actor_dd_tag: Optional[lxml.html.HtmlElement] = dt_tag.getnext()
+                if actor_dd_tag is not None and actor_dd_tag.text_content():
+                    actor_name: str = actor_dd_tag.text_content().strip()
+                    if actor_name:
+                        cast_list.append(_sanitize_xml_string(f"{actor_name} ({role})" if role else actor_name) or "")
+            detail_data['cast'] = ", ".join(cast_list) if cast_list else None
 
-    def _extract_crew_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
+
+    def _extract_crew_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
         Extracts crew information (director, screenplay, camera) from the HTML root.
 
@@ -524,32 +518,24 @@ class TvsHtmlParser:
         :type root: lxml.html.HtmlElement
         :param detail_data: The dictionary to update with extracted data.
         :type detail_data: Dict[str, Any]
+        :param detail_sections: Pre-parsed dictionary of detail sections.
+        :type detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]
         """
-        for crew_container_elem in self.base_detail_list_container(root):
-            headline_p_elements = self.selector_headline_p(crew_container_elem)
-            if headline_p_elements and headline_p_elements[0].text_content().strip() == "Crew":
-                crew_dl: List[lxml.html.HtmlElement] = self.selector_dl(crew_container_elem)
-                if crew_dl:
-                    dt_elements = self.selector_dt(crew_dl[0])
-                    dd_elements = self.selector_dd(crew_dl[0])
-                    for dt, dd in zip(dt_elements, dd_elements):
-                        dt_text: str = dt.text_content().strip()
-                        dd_text: str = dd.text_content().strip()
-                        if dd_text:
-                            if dt_text == 'Regie':
-                                detail_data['director'] = _sanitize_xml_string(dd_text)
-                            elif dt_text == 'Drehbuch':
-                                sanitized_dd_text: Optional[str] = _sanitize_xml_string(dd_text)
-                                detail_data['screenplay'] = f"{detail_data['screenplay']}, {sanitized_dd_text}" if detail_data['screenplay'] else sanitized_dd_text
-                            elif dt_text == 'Kamera':
-                                detail_data['camera'] = _sanitize_xml_string(dd_text)
-                        else:
-                            logger.debug(f"Empty DD tag found for DT: '{dt_text}'.")
-                else:
-                    logger.debug("Crew DL tag not found.")
-                break
-            else:
-                logger.debug("Crew headline not found for crew info extraction.")
+        crew_dl = detail_sections.get('Crew')
+        if crew_dl:
+            dt_elements = self.selector_dt(crew_dl)
+            dd_elements = self.selector_dd(crew_dl)
+            for dt, dd in zip(dt_elements, dd_elements):
+                dt_text: str = dt.text_content().strip()
+                dd_text: str = dd.text_content().strip()
+                if dd_text:
+                    if dt_text == 'Regie':
+                        detail_data['director'] = _sanitize_xml_string(dd_text)
+                    elif dt_text == 'Drehbuch':
+                        sanitized_dd_text: Optional[str] = _sanitize_xml_string(dd_text)
+                        detail_data['screenplay'] = f"{detail_data['screenplay']}, {sanitized_dd_text}" if detail_data['screenplay'] else sanitized_dd_text
+                    elif dt_text == 'Kamera':
+                        detail_data['camera'] = _sanitize_xml_string(dd_text)
 
 
     def _extract_rating_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
@@ -573,17 +559,11 @@ class TvsHtmlParser:
                         # Invert numrating: 1->3, 2->2, 3->1
                         detail_data['numrating'] = 4 - original_rating
                     except ValueError:
-                        logger.warning(f"Could not convert numerical rating class '{rating_class_match.group(1)}' to integer.")
-                else:
-                    logger.debug("Rating class match not found for numerical rating div.")
-            else:
-                logger.debug("Numerical rating div not found or has no class attribute.")
+                        logger.debug(f"Could not convert numerical rating class '{rating_class_match.group(1)}' to integer.")
 
             txt_rating_tag: List[lxml.html.HtmlElement] = self.selector_txt_rating_tag(content_rating_section[0])
             if txt_rating_tag and txt_rating_tag[0].text_content():
                 detail_data['txtrating'] = _sanitize_xml_string(txt_rating_tag[0].text_content().strip())
-            else:
-                logger.debug("Text rating tag not found or empty.")
 
             rating_list_items: List[lxml.html.HtmlElement] = self.selector_rating_list_items(content_rating_section[0])
             if rating_list_items:
@@ -597,29 +577,16 @@ class TvsHtmlParser:
                             num_dots: int = int(rating_class_match.group(1))
                             stars: str = '*' * num_dots
                             ratings_parts.append(f"{label[0].text_content().strip()} {stars}")
-                        else:
-                            logger.debug("Rating class match not found for rating list item span.")
-                    else:
-                        logger.debug("Label or rating span not found/empty for a rating list item.")
                 if ratings_parts:
                     detail_data['rating'] = _sanitize_xml_string(" / ".join(ratings_parts))
-            else:
-                logger.debug("Rating list items not found.")
 
             imdb_rating_tag: List[lxml.html.HtmlElement] = self.selector_imdb_rating_tag(content_rating_section[0])
             if imdb_rating_tag and imdb_rating_tag[0].text_content():
                 detail_data['imdbrating'] = _sanitize_xml_string(imdb_rating_tag[0].text_content().strip())
-            else:
-                logger.debug("IMDB rating tag not found or empty.")
 
             tipp_tag: List[lxml.html.HtmlElement] = self.selector_tipp_tag(content_rating_section[0])
             if tipp_tag and tipp_tag[0].text_content():
                 detail_data['tipp'] = _sanitize_xml_string(tipp_tag[0].text_content().strip())
-            else:
-                logger.debug("Tipp tag not found or empty.")
-
-        else:
-            logger.debug("Content rating section not found.")
 
     def _extract_additional_credits(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
         """
@@ -636,7 +603,6 @@ class TvsHtmlParser:
 
         broadcast_guests_container: List[lxml.html.HtmlElement] = self.selector_broadcast_guests_container(root)
         if not broadcast_guests_container:
-            logger.debug("Broadcast guests container not found.")
             return
 
         for guests_ul in self.selector_guests_list(broadcast_guests_container[0]):
@@ -680,11 +646,14 @@ class TvsHtmlParser:
         if adsc_sparte_match:
             detail_data['keyword'] = _sanitize_xml_string(adsc_sparte_match.group(1).strip())
 
+        # Consolidate parsing of detail sections
+        detail_sections = self._get_detail_sections(root)
+
         self._extract_description(root, detail_data)
-        self._extract_genre_info(root, detail_data)
-        self._extract_general_info(root, detail_data)
-        self._extract_cast_info(root, detail_data)
-        self._extract_crew_info(root, detail_data)
+        self._extract_genre_info(root, detail_data, detail_sections)
+        self._extract_general_info(root, detail_data, detail_sections)
+        self._extract_cast_info(root, detail_data, detail_sections)
+        self._extract_crew_info(root, detail_data, detail_sections)
         self._extract_rating_info(root, detail_data)
         self._extract_additional_credits(root, detail_data)
 
@@ -699,8 +668,6 @@ class TvsHtmlParser:
 
                 subtitle_temp = potential_subtitle.lower()
 
-                logger.debug(f"Checking for redundant subtitle in '{subtitle_temp}'. Original title: '{title}'.")
-
                 if subtitle_temp.startswith("mehr zu "):
                     subtitle_without_prefix = subtitle_temp[len("mehr zu "):].strip()
                     normalized_subtitle_for_comparison = re.sub(r'[^a-z0-9äöüß]', '', subtitle_without_prefix)
@@ -709,13 +676,9 @@ class TvsHtmlParser:
                         logger.debug(f"Discarding redundant subtitle '{potential_subtitle}' for title '{title}'.")
                         detail_data['subtitle'] = None
                     else:
-                        logger.debug(f"Keeping non-redundant subtitle '{potential_subtitle}' (after prefix removal) for title '{title}'.")
                         detail_data['subtitle'] = potential_subtitle
                 else:
-                    logger.debug(f"Keeping subtitle '{potential_subtitle}' (no 'Mehr zu' prefix) for title '{title}'.")
                     detail_data['subtitle'] = potential_subtitle
-            else:
-                detail_data['subtitle'] = potential_subtitle
         else:
             logger.debug("Subtitle tag (h2.broadcast-info) not found or empty.")
 
@@ -728,11 +691,8 @@ class TvsHtmlParser:
                 episode = episode_match.group(2)
                 detail_data['season_num'] = int(season)
                 detail_data['episode_num'] = int(episode)
-                logger.debug(f"Parsed season: {season}, episode: {episode} from '{episode_text}'")
             else:
                 logger.debug(f"Could not parse season/episode from '{episode_text}'.")
-        else:
-            logger.debug("Season/episode tag (section.serial-info span) not found or empty.")
 
         return detail_data
 
@@ -961,6 +921,24 @@ class TvsLeanScraper:
         date_str: str = current_date.strftime('%Y-%m-%d')
         return f"{channel_url}?date={date_str}"
 
+    def _build_request_headers(self, etag: Optional[str] = None, last_modified: Optional[str] = None) -> Dict[str, str]:
+        """
+        Builds the HTTP headers dictionary for a request.
+
+        :param etag: The ETag from a previous response, for conditional GET.
+        :type etag: Optional[str]
+        :param last_modified: The Last-Modified header from a previous response, for conditional GET.
+        :type last_modified: Optional[str]
+        :returns: A dictionary of HTTP headers.
+        :rtype: Dict[str, str]
+        """
+        headers: Dict[str, str] = {'User-Agent': random.choice(self.user_agents)}
+        if etag:
+            headers['If-None-Match'] = etag
+        if last_modified:
+            headers['If-Modified-Since'] = last_modified
+        return headers
+
     def _execute_http_request(self, method: str, url: str, headers: Dict[str, str], allow_redirects: bool, timeout: int) -> Optional[requests.Response]:
         """
         Internal function to make HTTP requests and handle RequestExceptions.
@@ -994,7 +972,7 @@ class TvsLeanScraper:
                 elapsed = time.time() - self.last_request_time
                 if elapsed < self.min_request_delay:
                     sleep_time = self.min_request_delay - elapsed
-                    # logger.debug(f"Waiting {sleep_time:.2f} seconds before request to {url}")
+                    # logger.debug(f"Waiting {sleep_time:.2f} seconds before request to {url}") # Reduced logging frequency
                     time.sleep(sleep_time)
                 self.last_request_time = time.time()
 
@@ -1066,7 +1044,7 @@ class TvsLeanScraper:
             logger.debug(f"Stop event set. Aborting fetch for {url}.")
             return None, None, None, None
 
-        headers: Dict[str, str] = {'User-Agent': random.choice(self.user_agents)}
+        headers = self._build_request_headers(etag, last_modified)
 
         if self.cache_clear_requested:
             logger.debug(f"Performing full GET for {url} (explicit --cache-clear requested).")
@@ -1080,11 +1058,6 @@ class TvsLeanScraper:
 
             logger.debug(f"Fetched live: {url} (Status: {response.status_code}). ETag: {new_etag}, Last-Modified: {new_last_modified}, Content-Length: {fetched_content_length}")
             return response.text, new_etag, new_last_modified, fetched_content_length
-
-        if etag:
-            headers['If-None-Match'] = etag
-        if last_modified:
-            headers['If-Modified-Since'] = last_modified
 
         headers_tuple = tuple(sorted(headers.items()))
         response = self._make_request_cached_wrapper('get', url, headers_tuple, allow_redirects, self.http_timeout)
@@ -1449,7 +1422,7 @@ class TvsLeanScraper:
         status: str = 'error'
 
         try:
-            headers = {'User-Agent': random.choice(self.user_agents)}
+            headers = self._build_request_headers() # Use helper
             headers_tuple = tuple(sorted(headers.items()))
             response = self._make_request_cached_wrapper('head', original_image_url, headers_tuple, allow_redirects=True, timeout=self.http_timeout)
 
@@ -1457,23 +1430,23 @@ class TvsLeanScraper:
                 final_url = response.url
                 if response.status_code == 200:
                     status = 'avail'
-                    logger.debug(f"Image {item_id_for_log} is available: {final_url}")
+                    # logger.debug(f"Image {item_id_for_log} is available: {final_url}") # Reduced logging frequency
                 elif 400 <= response.status_code < 500:
                     status = 'not_avail'
-                    logger.warning(f"Image {item_id_for_log} not available (HTTP {response.status_code}): {final_url}")
+                    logger.debug(f"Image {item_id_for_log} not available (HTTP {response.status_code}): {final_url}")
                 elif 500 <= response.status_code < 600:
                     status = 'not_avail'
-                    logger.warning(f"Image {item_id_for_log} not available (HTTP {response.status_code}): {final_url}")
+                    logger.debug(f"Image {item_id_for_log} not available (HTTP {response.status_code}): {final_url}")
                 else:
                     status = 'error'
-                    logger.warning(f"Image {item_id_for_log} check returned unexpected status {response.status_code}: {final_url}")
+                    logger.debug(f"Image {item_id_for_log} check returned unexpected status {response.status_code}: {final_url}")
             else:
                 status = 'error'
-                logger.warning(f"Failed HEAD request for image {item_id_for_log}: {original_image_url}")
+                logger.debug(f"Failed HEAD request for image {item_id_for_log}: {original_image_url}")
 
         except Exception as e:
             status = 'error'
-            logger.warning(f"Exception during HEAD request for image {item_id_for_log}: {e}. URL: {original_image_url}")
+            logger.debug(f"Exception during HEAD request for image {item_id_for_log}: {e}. URL: {original_image_url}")
 
         if status == 'avail' and (
             'placehold.it' in final_url or
@@ -1624,7 +1597,7 @@ class TvsLeanScraper:
                             channel_info,
                             current_date
                         )
-                        for item_data in items_for_day: # Changed 'item' to 'item_data' for clarity and consistency
+                        for item_data in items_for_day:
                             item_data.update({
                                 'detail_etag': None,
                                 'detail_last_modified': None,
@@ -1650,7 +1623,7 @@ class TvsLeanScraper:
                     logger.info(f"KeyboardInterrupt caught in worker for {channel_name} on {current_date.strftime('%Y-%m-%d')}. Signaling main thread to stop.")
                     raise
                 except Exception as exc:
-                    logger.exception(f"Schedule generation for {channel_name} on {current_date.strftime('%Y-%m-%d')} generated an exception on attempt {attempt + 1}: {exc}")
+                    logger.error(f"Schedule generation for {channel_name} on {current_date.strftime('%Y-%m-%d')} generated an exception on attempt {attempt + 1}: {exc}", exc_info=True)
                     if attempt < self.max_schedule_retries:
                         time.sleep(1 * (attempt + 1))
                     else:
@@ -1741,12 +1714,12 @@ class TvsLeanScraper:
                         items_for_day[index]['detail_etag'] = new_detail_etag
                         items_for_day[index]['detail_last_modified'] = new_detail_last_modified
                         items_for_day[index]['detail_content_length'] = new_detail_content_length
-                        logger.debug(f"Detail task for item {items_for_day[index].get('title', 'N/A')} on {current_date.strftime('%Y-%m-%d')} completed. Data updated.")
+                        # logger.debug(f"Detail task for item {items_for_day[index].get('title', 'N/A')} on {current_date.strftime('%Y-%m-%d')} completed. Data updated.") # Reduced logging frequency
                     elif task_type == 'image_only':
                         checked_url, status = future.result()
                         items_for_day[index]['image_url'] = checked_url
                         items_for_day[index]['image_check'] = status
-                        logger.debug(f"Image check task for item {items_for_day[index].get('title', 'N/A')} on {current_date.strftime('%Y-%m-%d')} completed. Image data updated.")
+                        # logger.debug(f"Image check task for item {items_for_day[index].get('title', 'N/A')} on {current_date.strftime('%Y-%m-%d')} completed. Image data updated.") # Reduced logging frequency
                     elif task_type == 'detail_and_image':
                         detailed_data_from_combined, checked_url, status, new_detail_etag, new_detail_last_modified, new_detail_content_length = future.result()
                         items_for_day[index].update(detailed_data_from_combined)
@@ -1755,13 +1728,13 @@ class TvsLeanScraper:
                         items_for_day[index]['detail_etag'] = new_detail_etag
                         items_for_day[index]['detail_last_modified'] = new_detail_last_modified
                         items_for_day[index]['detail_content_length'] = new_detail_content_length
-                        logger.debug(f"Detail/combined task for item {items_for_day[index].get('title', 'N/A')} on {current_date.strftime('%Y-%m-%d')} completed. Data updated.")
+                        # logger.debug(f"Detail/combined task for item {items_for_day[index].get('title', 'N/A')} on {current_date.strftime('%Y-%m-%d')} completed. Data updated.") # Reduced logging frequency
 
                 except Exception as exc:
                     logger.error(f"Error processing detail/image for item {items_for_day[index].get('title', 'N/A')} on {current_date.strftime('%Y-%m-%d')}: {exc}", exc_info=True)
 
 
-        for item_data in items_for_day: # Changed 'item' to 'item_data' for clarity and consistency
+        for item_data in items_for_day:
             if self.stop_event.is_set():
                 logger.debug(f"Stop event set. Aborting final item processing for {channel_name}.")
                 return []
