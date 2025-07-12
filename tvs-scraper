@@ -60,6 +60,7 @@ RETRY_BACKOFF_FACTOR: float = 1.0
 DEFAULT_OUTPUT_FORMAT: str = 'xmltv'
 DEFAULT_SYSLOG_TAG: str = 'tvs-scraper'
 DEFAULT_MIN_REQUEST_DELAY: float = 0.05
+DEFAULT_MAX_CONCURRENT_REQUESTS: int = 15
 DEFAULT_MAX_SCHEDULE_RETRIES: int = 3
 DEFAULT_CACHE_VALIDATION_TOLERANCE: int = 5
 DEFAULT_HTTP_TIMEOUT: int = 10
@@ -453,28 +454,31 @@ class TvsHtmlParser:
                     for dt, dd in zip(dt_elements, dd_elements):
                         dt_text: str = dt.text_content().strip()
                         dd_text: str = dd.text_content().strip()
-                        if dt_text == 'Originaltitel':
-                            detail_data['original_title'] = _sanitize_xml_string(dd_text)
-                        elif dt_text == 'Land':
-                            detail_data['country'] = _sanitize_xml_string(dd_text)
-                        elif dt_text == 'Jahr':
-                            try:
-                                detail_data['year'] = int(dd_text)
-                            except ValueError:
-                                logger.warning(f"Could not parse year from '{dd_text}'.")
-                        elif dt_text == 'Länge':
-                            duration_minutes_match: Optional[re.Match[str]] = self.re_duration_minutes_match.search(dd_text)
-                            if duration_minutes_match:
-                                detail_data['duration'] = int(duration_minutes_match.group(1)) * 60
-                            else:
-                                logger.warning(f"Could not parse duration from '{dd_text}'.")
-                        elif dt_text == 'FSK':
-                            fsk_match: Optional[re.Match[str]] = self.re_fsk_match.search(dd_text)
-                            if fsk_match:
+                        if dd_text:
+                            if dt_text == 'Originaltitel':
+                                detail_data['original_title'] = _sanitize_xml_string(dd_text)
+                            elif dt_text == 'Land':
+                                detail_data['country'] = _sanitize_xml_string(dd_text)
+                            elif dt_text == 'Jahr':
                                 try:
-                                    detail_data['parentalrating'] = int(fsk_match.group(1))
+                                    detail_data['year'] = int(dd_text)
                                 except ValueError:
-                                    logger.warning(f"Could not parse FSK rating from '{fsk_match.group(1)}'.")
+                                    logger.warning(f"Could not parse year from '{dd_text}'.")
+                            elif dt_text == 'Länge':
+                                duration_minutes_match: Optional[re.Match[str]] = self.re_duration_minutes_match.search(dd_text)
+                                if duration_minutes_match:
+                                    detail_data['duration'] = int(duration_minutes_match.group(1)) * 60
+                                else:
+                                    logger.warning(f"Could not parse duration from '{dd_text}'.")
+                            elif dt_text == 'FSK':
+                                fsk_match: Optional[re.Match[str]] = self.re_fsk_match.search(dd_text)
+                                if fsk_match:
+                                    try:
+                                        detail_data['parentalrating'] = int(fsk_match.group(1))
+                                    except ValueError:
+                                        logger.warning(f"Could not parse FSK rating from '{fsk_match.group(1)}'.")
+                        else:
+                            logger.debug(f"Empty DD tag found for DT: '{dt_text}'.")
                 else:
                     logger.debug("Information DL tag not found.")
                 break
@@ -760,6 +764,7 @@ class TvsLeanScraper:
     def __init__(self, channel_ids: Optional[str] = None, days: Optional[int] = None, img_size: Optional[str] = None, check_img: Optional[bool] = None, start_date_str: Optional[str] = None,
                  cache_dir_path: Optional[str] = None, max_workers: int = DEFAULT_MAX_WORKERS, max_retries: int = DEFAULT_MAX_RETRIES,
                  channel_ids_file: Optional[str] = None, min_request_delay: float = DEFAULT_MIN_REQUEST_DELAY,
+                 max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
                  max_schedule_retries: int = DEFAULT_MAX_SCHEDULE_RETRIES,
                  disable_cache: bool = DEFAULT_CACHE_DISABLE, cache_ttl: int = DEFAULT_CACHE_TTL_SECONDS,
                  keep_past_cache: bool = False, cache_clear: bool = False, xmltv_timezone: Optional[str] = None,
@@ -776,7 +781,7 @@ class TvsLeanScraper:
         :type img_size: Optional[str]
         :param check_img: Boolean to enable/disable image URL validity checks.
         :type check_img: Optional[bool]
-        :param start_date_str: Specific date to scrape inYYYYMMDD format.
+        :param start_date_str: Specific date to scrape in YYYYMMDD format.
         :type start_date_str: Optional[str]
         :param cache_dir_path: Custom directory for cache files.
         :type cache_dir_path: Optional[str]
@@ -788,6 +793,9 @@ class TvsLeanScraper:
         :type channel_ids_file: Optional[str]
         :param min_request_delay: Minimum delay in seconds between HTTP requests.
         :type min_request_delay: float
+        :param max_concurrent_requests: Maximum number of concurrent HTTP requests allowed.
+                                        This acts as a global rate limiter.
+        :type max_concurrent_requests: int
         :param max_schedule_retries: Maximum retries for application-level schedule parsing errors.
         :type max_schedule_retries: int
         :param disable_cache: If True, disables processed JSON data caching.
@@ -895,7 +903,8 @@ class TvsLeanScraper:
         adapter = HTTPAdapter(
             max_retries=self.retry_strategy,
             pool_connections=self.pool_size,
-            pool_maxsize=self.pool_size
+            pool_maxsize=self.pool_size,
+            pool_block=True
         )
         self.session.mount("http://", adapter)
         self.session.mount("https://", adapter)
@@ -905,6 +914,10 @@ class TvsLeanScraper:
 
         self.min_request_delay: float = min_request_delay
         self.max_schedule_retries: int = max_schedule_retries
+        self.request_semaphore = threading.BoundedSemaphore(value=max_concurrent_requests)
+        logger.info(f"Max concurrent HTTP requests limited to: {max_concurrent_requests}.")
+        self.last_request_time = 0.0
+        self.last_request_time_lock = threading.Lock()
 
         self.enable_cache: bool = not disable_cache
         self.cache_ttl: int = cache_ttl
@@ -952,6 +965,7 @@ class TvsLeanScraper:
         """
         Internal function to make HTTP requests and handle RequestExceptions.
         Contains common logic for stop event checks, URL validation, and request execution.
+        Applies rate limiting using a semaphore and minimum delay.
 
         :param method: HTTP method ('get' or 'head').
         :type method: str
@@ -975,26 +989,33 @@ class TvsLeanScraper:
             logger.warning(f"Invalid or unsupported URL scheme: {url}. Skipping request.")
             return None
 
-        try:
-            if method == 'get':
-                response: requests.Response = self.session.get(url, headers=headers, allow_redirects=allow_redirects, timeout=timeout)
-            elif method == 'head':
-                response: requests.Response = self.session.head(url, headers=headers, allow_redirects=allow_redirects, timeout=timeout)
-            else:
-                logger.error(f"Unsupported HTTP method: {method}")
+        with self.request_semaphore:
+            with self.last_request_time_lock:
+                elapsed = time.time() - self.last_request_time
+                if elapsed < self.min_request_delay:
+                    sleep_time = self.min_request_delay - elapsed
+                    # logger.debug(f"Waiting {sleep_time:.2f} seconds before request to {url}")
+                    time.sleep(sleep_time)
+                self.last_request_time = time.time()
+
+            try:
+                if method == 'get':
+                    response: requests.Response = self.session.get(url, headers=headers, allow_redirects=allow_redirects, timeout=timeout)
+                elif method == 'head':
+                    response: requests.Response = self.session.head(url, headers=headers, allow_redirects=allow_redirects, timeout=timeout)
+                else:
+                    logger.error(f"Unsupported HTTP method: {method}")
+                    return None
+
+                if self.stop_event.is_set():
+                    logger.debug(f"Stop event set during {method.upper()} for {url}.")
+                    return None
+
+                response.raise_for_status()
+                return response
+            except requests.exceptions.RequestException as e:
+                logger.error(f"Request failed for {url} ({method.upper()}): {e}")
                 return None
-
-            if self.stop_event.is_set():
-                logger.debug(f"Stop event set during {method.upper()} for {url}.")
-                return None
-
-            time.sleep(random.uniform(self.min_request_delay, self.min_request_delay + 0.2))
-
-            response.raise_for_status()
-            return response
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request failed for {url} ({method.upper()}): {e}")
-            return None
 
     @functools.lru_cache(maxsize=256)
     def _make_request_cached_wrapper(self, method: str, url: str, headers_tuple: Tuple[Tuple[str, str], ...], allow_redirects: bool, timeout: int) -> Optional[requests.Response]:
@@ -1111,7 +1132,7 @@ class TvsLeanScraper:
                     data = json.load(f)
                     return data
                 except json.JSONDecodeError as e:
-                    logger.warning(f"Error decoding JSON cache: {e}. Deleting corrupted file: {filepath}")
+                    logger.warning(f"Error decoding cache: {e}. Deleting corrupted file: {filepath}")
                     f.seek(0)
                     f.truncate()
                     if os.path.exists(filepath):
@@ -1123,7 +1144,7 @@ class TvsLeanScraper:
             logger.warning(f"Could not acquire lock for cache file {filepath}: {e}. Skipping cache load.")
             return None
         except IOError as e:
-            logger.warning(f"IOError loading JSON cache from {filepath}: {e}.")
+            logger.warning(f"IOError loading cache from {filepath}: {e}.")
             return None
         except Exception as e:
             logger.error(f"Unexpected error in _load_json_with_lock for {filepath}: {e}")
@@ -1151,17 +1172,17 @@ class TvsLeanScraper:
                 finally:
                     portalocker.unlock(f)
             os.replace(temp_filepath, filepath)
-            logger.debug(f"Saved JSON data to cache: {filepath}")
+            logger.debug(f"Saved data to cache: {filepath}")
         except portalocker.LockException as e:
             logger.warning(f"Could not acquire lock for temporary cache file during save: {e}. Skipping cache save.")
             if os.path.exists(temp_filepath):
                 os.remove(temp_filepath)
         except IOError as e:
-            logger.error(f"Error saving JSON cache to {filepath} (IOError): {e}.")
+            logger.error(f"Error saving cache to {filepath} (IOError): {e}.")
             if os.path.exists(temp_filepath):
                 os.remove(temp_filepath)
         except Exception as e:
-            logger.error(f"Unexpected error saving JSON cache to {filepath}: {e}")
+            logger.error(f"Unexpected error saving cache to {filepath}: {e}")
             if os.path.exists(temp_filepath):
                 os.remove(temp_filepath)
 
@@ -1210,17 +1231,17 @@ class TvsLeanScraper:
 
                 if is_cache_fresh and cached_channels_list is not None:
                     channels = cached_channels_list
-                    logger.debug("Using fresh channel list from JSON cache.")
+                    logger.debug("Using fresh channel list from cache.")
                     new_etag = cached_etag
                     new_last_modified = cached_last_modified
                     fetched_content_length = cached_content_length
                     return channels
                 elif cached_channels_list is not None:
-                    logger.debug("Channel list JSON cache is stale. Attempting conditional fetch.")
+                    logger.debug("Channel list cache is stale. Attempting conditional fetch.")
                 else:
-                    logger.debug("Channel list JSON cache found but data is malformed. Performing full fetch.")
+                    logger.debug("Channel list cache found but data is malformed. Performing full fetch.")
             else:
-                logger.debug("Channel list JSON cache not found or unreadable. Performing full fetch.")
+                logger.debug("Channel list cache not found or unreadable. Performing full fetch.")
         else:
             if self.cache_clear_requested:
                 logger.debug("Cache clear requested. Bypassing channel list cache.")
@@ -1248,7 +1269,7 @@ class TvsLeanScraper:
                 }
                 self._save_json_with_lock(self._get_cache_channel_list_filepath(), cache_content)
         elif cached_channels_list is not None:
-            logger.debug("Channel list HTML content not modified (304) or semantically identical. Using stale JSON cache.")
+            logger.debug("Channel list HTML content not modified (304) or semantically identical. Using stale cache.")
             channels = cached_channels_list
             new_etag = new_etag if new_etag is not None else cached_etag
             new_last_modified = new_last_modified if new_last_modified is not None else cached_last_modified
@@ -1343,9 +1364,9 @@ class TvsLeanScraper:
                 is_fresh = True
 
         if is_fresh:
-            logger.debug(f"Loaded schedule for {channel_id} on {date.strftime('%Y-%m-%d')} from daily JSON cache (fresh).")
+            logger.debug(f"Loaded schedule for {channel_id} on {date.strftime('%Y-%m-%d')} from daily cache (fresh).")
         else:
-            logger.debug(f"Daily JSON cache for {channel_id} on {date.strftime('%Y-%m-%d')} is stale. Will attempt conditional fetch.")
+            logger.debug(f"Daily cache for {channel_id} on {date.strftime('%Y-%m-%d')} is stale. Will attempt conditional fetch.")
 
         return data, etag, last_modified, content_length, cached_xmltv_timezone, is_fresh
 
@@ -1566,13 +1587,13 @@ class TvsLeanScraper:
                 if is_cache_fresh and cached_data is not None:
                     if cached_xmltv_timezone == self.xmltv_timezone:
                         items_for_day = cached_data
-                        logger.debug(f"Using fresh data from JSON cache for {channel_name} on {current_date.strftime('%Y-%m-%d')} (timezone matches).")
+                        logger.debug(f"Using fresh data from cache for {channel_name} on {current_date.strftime('%Y-%m-%d')}.")
                     else:
                         logger.info(f"Cached data for {channel_name} on {current_date.strftime('%Y-%m-%d')} is fresh but timezone differs (cached: {cached_xmltv_timezone}, requested: {self.xmltv_timezone}). Reprocessing timestamps.")
                         items_for_day = cached_data
                     new_etag = cached_etag
-                    new_last_modified = cached_last_modified
-                    fetched_content_length = cached_content_length
+                    new_last_modified = new_last_modified if new_last_modified is not None else cached_last_modified
+                    fetched_content_length = fetched_content_length if fetched_content_length is not None else cached_content_length
         else:
             if self.cache_clear_requested:
                 logger.debug(f"Cache clear requested. Bypassing cache load for {channel_name} on {current_date.strftime('%Y-%m-%d')}.")
@@ -1611,9 +1632,9 @@ class TvsLeanScraper:
                             })
                         break
                     elif cached_data is not None:
-                        logger.debug(f"HTML content for {channel_name} on {current_date.strftime('%Y-%m-%d')} not modified (304) or semantically identical. Using stale JSON cache.")
+                        logger.debug(f"HTML content for {channel_name} on {current_date.strftime('%Y-%m-%d')} not modified (304) or semantically identical. Using stale cache.")
                         items_for_day = cached_data
-                        new_etag = cached_etag
+                        new_etag = new_etag if new_etag is not None else cached_etag
                         new_last_modified = new_last_modified if new_last_modified is not None else cached_last_modified
                         fetched_content_length = fetched_content_length if fetched_content_length is not None else cached_content_length
                         break
@@ -1991,7 +2012,7 @@ def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_time
     try:
         target_tz = ZoneInfo(xmltv_timezone)
     except Exception as e:
-        logger.error(f"Unknown timezone '{xmltv_timezone}' for XMLTV header. Falling back to UTC. Error: {e}")
+        logger.error(f"Unknown timezone '{xmltv_timezone}'. Falling back to UTC. Error: {e}")
         target_tz = timezone.utc
 
     now_in_target_tz = datetime.now(timezone.utc).astimezone(target_tz)
@@ -2324,13 +2345,13 @@ Examples:
         action='store_true',
         default=DEFAULT_CACHE_DISABLE,
         dest='disable_cache',
-        help='Disables caching of processed JSON data to disk. Default: False (cache is enabled).'
+        help='Disables caching of processed data to disk. Default: False (cache is enabled).'
     )
     parser.add_argument(
         '--cache-ttl',
         type=int,
         default=DEFAULT_CACHE_TTL_SECONDS,
-        help=f'Cache Time To Live in seconds. This defines how long a processed JSON file is considered "fresh" and used directly without re-scraping HTML. Default: {DEFAULT_CACHE_TTL_SECONDS // 3600} hours.'
+        help=f'Cache Time To Live in seconds. This defines how long a processed file is considered "fresh" and used directly without re-scraping HTML. Default: {DEFAULT_CACHE_TTL_SECONDS // 3600} hours.'
     )
     parser.add_argument(
         '--cache-validation-tolerance',
@@ -2348,8 +2369,8 @@ Examples:
     parser.add_argument(
         '--max-workers',
         type=int,
-        default=os.cpu_count() * 5,
-        help=f'Maximum number of concurrent workers for data fetching. Default: {os.cpu_count() * 5}.'
+        default=DEFAULT_MAX_WORKERS,
+        help=f'Maximum number of concurrent workers for data fetching. Default: {DEFAULT_MAX_WORKERS}.'
     )
     parser.add_argument(
         '--max-retries',
@@ -2362,6 +2383,12 @@ Examples:
         type=float,
         default=DEFAULT_MIN_REQUEST_DELAY,
         help=f'Minimum delay in seconds between HTTP requests. Applies only to live fetches. Default: {DEFAULT_MIN_REQUEST_DELAY}s.'
+    )
+    parser.add_argument(
+        '--max-concurrent-requests',
+        type=int,
+        default=DEFAULT_MAX_CONCURRENT_REQUESTS,
+        help=f'Maximum number of concurrent HTTP requests allowed. This acts as a global rate limiter. Default: {DEFAULT_MAX_CONCURRENT_REQUESTS}.'
     )
     parser.add_argument(
         '--max-schedule-retries',
@@ -2435,6 +2462,7 @@ Examples:
         max_retries=args.max_retries,
         channel_ids_file=getattr(args, 'channel_ids_file', None),
         min_request_delay=args.min_request_delay,
+        max_concurrent_requests=args.max_concurrent_requests,
         max_schedule_retries=args.max_schedule_retries,
         disable_cache=args.disable_cache,
         cache_ttl=args.cache_ttl,
