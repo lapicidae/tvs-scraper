@@ -789,7 +789,7 @@ class TvsLeanScraper:
                  max_schedule_retries: int = DEFAULT_MAX_SCHEDULE_RETRIES,
                  disable_cache: bool = DEFAULT_CACHE_DISABLE, cache_ttl: int = DEFAULT_CACHE_TTL_SECONDS,
                  keep_past_cache: bool = False, cache_clear: bool = False, xmltv_timezone: Optional[str] = None,
-                 cache_validation_tolerance: int = DEFAULT_CACHE_VALIDATION_TOLERANCE, image_crop_disable: bool = False,
+                 cache_validation_tolerance: int = DEFAULT_CACHE_VALIDATION_TOLERANCE,
                  http_timeout: int = DEFAULT_HTTP_TIMEOUT):
         """
         Initializes the TvsLeanScraper instance.
@@ -831,8 +831,6 @@ class TvsLeanScraper:
         :type xmltv_timezone: Optional[str]
         :param cache_validation_tolerance: Tolerance in bytes for content-length comparison when ETag/Last-Modified fails to return 304.
         :type cache_validation_tolerance: int
-        :param image_crop_disable: If True, disables default image cropping.
-        :type image_crop_disable: bool
         :param http_timeout: Timeout for HTTP requests in seconds.
         :type http_timeout: int
         :raises NotADirectoryError: If the specified cache path exists but is not a directory.
@@ -946,7 +944,6 @@ class TvsLeanScraper:
         self.keep_past_cache: bool = bool(keep_past_cache)
         self.cache_clear_requested: bool = cache_clear
         self.cache_validation_tolerance: int = cache_validation_tolerance
-        self.image_crop_disable: bool = image_crop_disable
         self.http_timeout: int = http_timeout
 
         if self.enable_cache:
@@ -2015,45 +2012,32 @@ class TvsLeanScraper:
         self.session.close()
 
 
-def _build_image_url_with_params(original_url: str, target_width: int, image_crop_disable: bool) -> str:
+def _build_image_url_with_params(original_url: str, target_width: int) -> str:
     """
-    Constructs an image URL with specified resize and optional crop parameters for XMLTV output.
-    If image_crop_disable is False, a default 16:9 crop (800x450) is added, replacing any existing crop.
-    If image_crop_disable is True, any existing crop instructions are removed.
-    The 'Resize,width={target_width}' parameter is always added or updated.
+    Constructs an image URL with specified resize parameters for XMLTV output.
+    Any existing crop or resize instructions in the original URL will be removed,
+    and only the 'Resize,width={target_width}' parameter will be applied.
 
     :param original_url: The original image URL.
     :type original_url: str
     :param target_width: The desired width for resizing.
     :type target_width: int
-    :param image_crop_disable: If True, disables default image cropping.
-    :type image_crop_disable: bool
     :returns: The modified image URL.
     :rtype: str
     """
     parsed_url = urlparse(original_url)
     raw_query_string = parsed_url.query
 
-    im_instructions_unencoded = []
     other_query_parts = []
 
     if raw_query_string:
         for part in raw_query_string.split('&'):
-            if part.startswith('im='):
-                im_value = parse_qs(part, keep_blank_values=True).get('im', [''])[0]
-                for instr in im_value.split(';'):
-                    if instr.strip() and not instr.strip().startswith('Crop,') and not instr.strip().startswith('Resize,'):
-                        im_instructions_unencoded.append(instr.strip())
-            else:
+            if not part.startswith('im='): # Keep only parameters that are not 'im='
                 other_query_parts.append(part)
 
     final_im_parts = []
 
-    if not image_crop_disable:
-        final_im_parts.append('Crop,rect=(0,0,800,450),gravity=Center')
-
-    final_im_parts.extend(im_instructions_unencoded)
-
+    # Always add the desired Resize instruction
     final_im_parts.append(f'Resize,width={target_width}')
 
     im_value_for_url = ';'.join(final_im_parts)
@@ -2069,7 +2053,7 @@ def _build_image_url_with_params(original_url: str, target_width: int, image_cro
     return parsed_url._replace(query=new_query_string).geturl()
 
 
-def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_timezone: str = 'Europe/Berlin', image_crop_disable: bool = False) -> None:
+def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_timezone: str = 'Europe/Berlin') -> None:
     """
     Generates an XMLTV-compliant XML file from the scraped data using lxml.etree.
     Applies XML character sanitation to all string content.
@@ -2081,8 +2065,6 @@ def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_time
     :type output_file: str
     :param xmltv_timezone: The timezone string to use for XMLTV header and program times.
     :type xmltv_timezone: str
-    :param image_crop_disable: If True, disables default image cropping.
-    :type image_crop_disable: bool
     :returns: None
     :rtype: None
     :raises Exception: If an error occurs during XMLTV file generation.
@@ -2277,8 +2259,7 @@ def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_time
             for width, size_attr_value in image_sizes_to_generate.items():
                 processed_image_url = _build_image_url_with_params(
                     item['image_url'],
-                    width,
-                    image_crop_disable
+                    width
                 )
                 image_elem = lxml.etree.SubElement(programme_elem, 'image', type='still', size=size_attr_value, orient='L', system='tvsp')
                 image_elem.text = processed_image_url
@@ -2385,12 +2366,6 @@ Examples:
         action='store_true',
         dest='check_image',
         help='If set, an additional HEAD request will be performed to check the validity of image URLs. This may increase scraping time.'
-    )
-    parser.add_argument(
-        '--img-crop-disable',
-        action='store_true',
-        dest='image_crop_disable',
-        help='If set, disables the default 16:9 image cropping for images without existing crop instructions.'
     )
 
     parser.add_argument(
@@ -2561,7 +2536,6 @@ Examples:
         cache_clear=args.clear_cache,
         xmltv_timezone=args.xmltv_timezone,
         cache_validation_tolerance=args.cache_validation_tolerance,
-        image_crop_disable=args.image_crop_disable,
         http_timeout=args.timeout_http
     )
 
@@ -2619,7 +2593,7 @@ Examples:
             output_filename = f"{output_filename}.xml"
 
         try:
-            generate_xmltv(extracted_data, output_filename, scraper.xmltv_timezone, scraper.image_crop_disable)
+            generate_xmltv(extracted_data, output_filename, scraper.xmltv_timezone)
         except Exception as e:
             logger.error(f"Failed to generate XMLTV file: {e}")
 
