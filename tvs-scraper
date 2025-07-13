@@ -42,14 +42,14 @@ from zoneinfo import ZoneInfo
 logger = logging.getLogger(__name__)
 
 DEFAULT_DAYS: int = 0
-DEFAULT_IMG_SIZE: str = "600"
-DEFAULT_IMG_CHECK: bool = False
+DEFAULT_IMAGE_SIZE: str = "600"
+DEFAULT_IMAGE_CHECK: bool = False
 MAX_DAYS_TO_SCRAPE: int = 13
 
-DEFAULT_CACHE_SUBDIR: str = "tvs-cache"
+DEFAULT_CACHE_SUBDIRECTORY: str = "tvs-cache"
 DEFAULT_CACHE_DISABLE: bool = False
 DEFAULT_CACHE_TTL_SECONDS: int = 24 * 60 * 60 # 24 hours
-CACHE_PROCESSED_DATA_SUBDIR: str = "processed-data"
+CACHE_PROCESSED_DATA_SUBDIRECTORY: str = "processed-data"
 CACHE_CHANNEL_LIST_FILE: str = "channels.json"
 
 DEFAULT_MAX_WORKERS: int = 10
@@ -212,6 +212,86 @@ class TvsHtmlParser:
         self.selector_guests_title: lxml.cssselect.CSSSelector = lxml.cssselect.CSSSelector('li.title')
         self.selector_guest_names: lxml.cssselect.CSSSelector = lxml.cssselect.CSSSelector('li:not(.title)')
 
+    def _parse_html_root(self, html_content: str, context_info: str = "HTML content") -> Optional[lxml.html.HtmlElement]:
+        """
+        Parses HTML content into an lxml HtmlElement, with robust error handling.
+
+        :param html_content: The HTML content string.
+        :type html_content: str
+        :param context_info: A string describing the context of the HTML (e.g., "channel list page").
+        :type context_info: str
+        :returns: The parsed lxml HtmlElement, or None if parsing fails.
+        :rtype: Optional[lxml.html.HtmlElement]
+        """
+        try:
+            root: lxml.html.HtmlElement = lxml.html.fromstring(html_content)
+            return root
+        except lxml.etree.XMLSyntaxError as e:
+            logger.error(f"XMLSyntaxError when parsing {context_info}: {e}. Returning None.")
+            return None
+        except Exception as e:
+            logger.error(f"Unexpected error when parsing {context_info}: {e}. Returning None.")
+            return None
+
+    def _normalize_string_for_comparison(self, text: Optional[str]) -> str:
+        """
+        Normalizes a string for case-insensitive and special-character-agnostic comparison.
+        Removes non-alphanumeric characters and converts to lowercase.
+
+        :param text: The input string.
+        :type text: Optional[str]
+        :returns: The normalized string.
+        :rtype: str
+        """
+        if text is None:
+            return ""
+        return re.sub(r'[^a-z0-9äöüß]', '', text.lower())
+
+    def _extract_dl_data(self, dl_element: lxml.html.HtmlElement, data_mapping: Dict[str, str], detail_data: Dict[str, Any]) -> None:
+        """
+        Extracts data from a <dl> (definition list) HTML element based on a mapping.
+
+        :param dl_element: The lxml HtmlElement representing the <dl> tag.
+        :type dl_element: lxml.html.HtmlElement
+        :param data_mapping: A dictionary mapping <dt> text content to target keys in `detail_data`.
+        :type data_mapping: Dict[str, str]
+        :param detail_data: The dictionary to update with extracted data.
+        :type detail_data: Dict[str, Any]
+        """
+        dt_elements: List[lxml.html.HtmlElement] = self.selector_dt(dl_element)
+        dd_elements: List[lxml.html.HtmlElement] = self.selector_dd(dl_element)
+
+        for dt, dd in zip(dt_elements, dd_elements):
+            dt_text: str = dt.text_content().strip()
+            dd_text: str = dd.text_content().strip()
+
+            if dd_text and dt_text in data_mapping:
+                target_key = data_mapping[dt_text]
+                sanitized_dd_text: Optional[str] = _sanitize_xml_string(dd_text)
+
+                if target_key == 'year':
+                    try:
+                        detail_data[target_key] = int(dd_text)
+                    except ValueError:
+                        logger.debug(f"Could not parse year from '{dd_text}'.")
+                elif target_key == 'duration':
+                    duration_minutes_match: Optional[re.Match[str]] = self.re_duration_minutes_match.search(dd_text)
+                    if duration_minutes_match:
+                        detail_data[target_key] = int(duration_minutes_match.group(1)) * 60
+                    else:
+                        logger.debug(f"Could not parse duration from '{dd_text}'.")
+                elif target_key == 'parentalrating':
+                    fsk_match: Optional[re.Match[str]] = self.re_fsk_match.search(dd_text)
+                    if fsk_match:
+                        try:
+                            detail_data[target_key] = int(fsk_match.group(1))
+                        except ValueError:
+                            logger.debug(f"Could not parse FSK rating from '{fsk_match.group(1)}'.")
+                elif target_key == 'screenplay':
+                    detail_data[target_key] = f"{detail_data[target_key]}, {sanitized_dd_text}" if detail_data[target_key] else sanitized_dd_text
+                else:
+                    detail_data[target_key] = sanitized_dd_text
+
     def parse_channel_list(self, html_content: str) -> List[Dict[str, str]]:
         """
         Parses the list of channels from the HTML content of the main sender page.
@@ -221,7 +301,10 @@ class TvsHtmlParser:
         :returns: A list of dictionaries, each containing 'name', 'url', and 'source_id' for a channel.
         :rtype: List[Dict[str, str]]
         """
-        root: lxml.html.HtmlElement = lxml.html.fromstring(html_content)
+        root: Optional[lxml.html.HtmlElement] = self._parse_html_root(html_content, "channel list HTML")
+        if root is None:
+            return []
+
         sender_links: List[lxml.html.HtmlElement] = self.selector_sender_links(root)
         logger.debug(f"Found {len(sender_links)} potential channel links.")
 
@@ -245,10 +328,14 @@ class TvsHtmlParser:
                 if tracking_data_str:
                     try:
                         tracking_data: Dict[str, Any] = json.loads(tracking_data_str)
-                        if 'channel' in tracking_data:
+                        if isinstance(tracking_data, dict) and 'channel' in tracking_data and isinstance(tracking_data['channel'], (str, int)):
                             source_id = str(tracking_data['channel']).lower()
-                    except json.JSONDecodeError:
-                        logger.debug(f"Could not parse data-tracking-point for {name}: {tracking_data_str}")
+                        else:
+                            logger.debug(f"Tracking data for {name} has unexpected structure: {tracking_data_str}")
+                    except json.JSONDecodeError as e:
+                        logger.debug(f"Could not parse data-tracking-point for {name}: {tracking_data_str}. Error: {e}")
+                    except Exception as e:
+                        logger.debug(f"Unexpected error processing data-tracking-point for {name}: {e}")
 
             if source_id and name:
                 logger.debug(f"Processing channel: {name} (ID: {source_id}, Href: {href})")
@@ -279,7 +366,9 @@ class TvsHtmlParser:
         channel_name: str = channel_info['name']
         channel_source_id: str = channel_info['source_id']
 
-        root: lxml.html.HtmlElement = lxml.html.fromstring(html_content)
+        root: Optional[lxml.html.HtmlElement] = self._parse_html_root(html_content, f"daily schedule HTML for channel {channel_name} on {current_date.strftime('%Y-%m-%d')}")
+        if root is None:
+            return []
 
         extracted_items: List[Dict[str, Any]] = []
 
@@ -306,25 +395,21 @@ class TvsHtmlParser:
                 item_data['endtime'] = None
 
             title_tag: List[lxml.html.HtmlElement] = self.selector_title_tag(li_element)
-            if title_tag:
+            if title_tag and title_tag[0].text_content():
                 item_data['title'] = _sanitize_xml_string(title_tag[0].text_content().strip())
             else:
                 logger.error(f"Missing title for item starting at {item_data['starttime']} in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}. Skipping entire item due to missing title.")
                 continue
 
             detail_link_tag: List[lxml.html.HtmlElement] = self.selector_detail_link_tag(li_element)
-            if detail_link_tag:
-                detail_href: Optional[str] = detail_link_tag[0].get('href')
-                if detail_href:
-                    if not detail_href.startswith('http'):
-                        item_data['link'] = f"{BASE_URL}{detail_href}"
-                    else:
-                        item_data['link'] = detail_href
+            if detail_link_tag and detail_link_tag[0].get('href'):
+                detail_href: str = detail_link_tag[0].get('href')
+                if not detail_href.startswith('http'):
+                    item_data['link'] = f"{BASE_URL}{detail_href}"
                 else:
-                    logger.debug(f"Detail link found but no href for item '{item_data['title']}' in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
-                    item_data['link'] = None
+                    item_data['link'] = detail_href
             else:
-                logger.debug(f"Missing detail link tag for item '{item_data['title']}' in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
+                logger.debug(f"Missing detail link tag or href for item '{item_data['title']}' in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
                 item_data['link'] = None
 
             data_id = li_element.get('data-id')
@@ -335,20 +420,16 @@ class TvsHtmlParser:
                 item_data['eventid'] = None
 
             image_div: List[lxml.html.HtmlElement] = self.selector_image_div(li_element)
-            if image_div:
-                style_attr: Optional[str] = image_div[0].get('style')
-                if style_attr:
-                    image_url_match: Optional[re.Match[str]] = self.re_image_url_match.search(style_attr)
-                    if image_url_match:
-                        item_data['image_url'] = image_url_match.group(1)
-                    else:
-                        logger.debug(f"No image URL found in style attribute for item '{item_data['title']}' in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
-                        item_data['image_url'] = None
+            if image_div and image_div[0].get('style'):
+                style_attr: str = image_div[0].get('style')
+                image_url_match: Optional[re.Match[str]] = self.re_image_url_match.search(style_attr)
+                if image_url_match:
+                    item_data['image_url'] = image_url_match.group(1)
                 else:
-                    logger.debug(f"Missing style attribute for image div for item '{item_data['title']}' in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
+                    logger.debug(f"No image URL found in style attribute for item '{item_data['title']}' in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
                     item_data['image_url'] = None
             else:
-                logger.debug(f"Missing image div for item '{item_data['title']}' in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
+                logger.debug(f"Missing image div or style attribute for item '{item_data['title']}' in {channel_name}'s schedule on {current_date.strftime('%Y-%m-%d')}.")
                 item_data['image_url'] = None
 
             extracted_items.append(item_data)
@@ -399,7 +480,7 @@ class TvsHtmlParser:
                 cleaned_paragraphs = [p.text_content().strip() for p in long_desc_paragraphs if p.text_content().strip()]
                 if cleaned_paragraphs:
                     detail_data['longdescription'] = _sanitize_xml_string("\n".join(cleaned_paragraphs))
-        
+
     def _extract_genre_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
         Extracts genre information from the HTML root.
@@ -456,34 +537,14 @@ class TvsHtmlParser:
         """
         infos_dl = detail_sections.get('Infos')
         if infos_dl is not None:
-            dt_elements: List[lxml.html.HtmlElement] = self.selector_dt(infos_dl)
-            dd_elements: List[lxml.html.HtmlElement] = self.selector_dd(infos_dl)
-            for dt, dd in zip(dt_elements, dd_elements):
-                dt_text: str = dt.text_content().strip()
-                dd_text: str = dd.text_content().strip()
-                if dd_text:
-                    if dt_text == 'Originaltitel':
-                        detail_data['original_title'] = _sanitize_xml_string(dd_text)
-                    elif dt_text == 'Land':
-                        detail_data['country'] = _sanitize_xml_string(dd_text)
-                    elif dt_text == 'Jahr':
-                        try:
-                            detail_data['year'] = int(dd_text)
-                        except ValueError:
-                            logger.debug(f"Could not parse year from '{dd_text}'.")
-                    elif dt_text == 'Länge':
-                        duration_minutes_match: Optional[re.Match[str]] = self.re_duration_minutes_match.search(dd_text)
-                        if duration_minutes_match:
-                            detail_data['duration'] = int(duration_minutes_match.group(1)) * 60
-                        else:
-                            logger.debug(f"Could not parse duration from '{dd_text}'.")
-                    elif dt_text == 'FSK':
-                        fsk_match: Optional[re.Match[str]] = self.re_fsk_match.search(dd_text)
-                        if fsk_match:
-                            try:
-                                detail_data['parentalrating'] = int(fsk_match.group(1))
-                            except ValueError:
-                                logger.debug(f"Could not parse FSK rating from '{fsk_match.group(1)}'.")
+            mapping = {
+                'Originaltitel': 'original_title',
+                'Land': 'country',
+                'Jahr': 'year',
+                'Länge': 'duration',
+                'FSK': 'parentalrating'
+            }
+            self._extract_dl_data(infos_dl, mapping, detail_data)
 
     def _extract_cast_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
@@ -522,20 +583,12 @@ class TvsHtmlParser:
         """
         crew_dl = detail_sections.get('Crew')
         if crew_dl is not None:
-            dt_elements = self.selector_dt(crew_dl)
-            dd_elements = self.selector_dd(crew_dl)
-            for dt, dd in zip(dt_elements, dd_elements):
-                dt_text: str = dt.text_content().strip()
-                dd_text: str = dd.text_content().strip()
-                if dd_text:
-                    if dt_text == 'Regie':
-                        detail_data['director'] = _sanitize_xml_string(dd_text)
-                    elif dt_text == 'Drehbuch':
-                        sanitized_dd_text: Optional[str] = _sanitize_xml_string(dd_text)
-                        detail_data['screenplay'] = f"{detail_data['screenplay']}, {sanitized_dd_text}" if detail_data['screenplay'] else sanitized_dd_text
-                    elif dt_text == 'Kamera':
-                        detail_data['camera'] = _sanitize_xml_string(dd_text)
-
+            mapping = {
+                'Regie': 'director',
+                'Drehbuch': 'screenplay',
+                'Kamera': 'camera'
+            }
+            self._extract_dl_data(crew_dl, mapping, detail_data)
 
     def _extract_rating_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
         """
@@ -573,9 +626,12 @@ class TvsHtmlParser:
                     if label and label[0].text_content() and rating_span and rating_span[0].get('class'):
                         rating_class_match = self.re_rating_class_match.search(' '.join(rating_span[0].get('class', '').split()))
                         if rating_class_match:
-                            num_dots: int = int(rating_class_match.group(1))
-                            stars: str = '*' * num_dots
-                            ratings_parts.append(f"{label[0].text_content().strip()} {stars}")
+                            try:
+                                num_dots: int = int(rating_class_match.group(1))
+                                stars: str = '*' * num_dots
+                                ratings_parts.append(f"{label[0].text_content().strip()} {stars}")
+                            except ValueError:
+                                logger.debug(f"Could not parse rating dots from class '{rating_class_match.group(1)}'.")
                 if ratings_parts:
                     detail_data['rating'] = _sanitize_xml_string(" / ".join(ratings_parts))
 
@@ -639,7 +695,9 @@ class TvsHtmlParser:
         detail_data = TvsLeanScraper._DETAIL_DATA_TEMPLATE.copy()
         detail_data.update(program_item_data)
 
-        root: lxml.html.HtmlElement = lxml.html.fromstring(html_content)
+        root: Optional[lxml.html.HtmlElement] = self._parse_html_root(html_content, f"program details HTML for '{program_item_data.get('title', 'N/A')}'")
+        if root is None:
+            return program_item_data
 
         adsc_sparte_match: Optional[re.Match[str]] = self.re_adsc_sparte_match.search(html_content)
         if adsc_sparte_match:
@@ -662,15 +720,14 @@ class TvsHtmlParser:
             if potential_subtitle and detail_data.get('title'):
                 title = detail_data['title'].strip()
 
-                normalized_title_for_comparison = re.sub(r'[^a-z0-9äöüß]', '', title.lower())
+                normalized_title_for_comparison = self._normalize_string_for_comparison(title)
+                normalized_subtitle_temp = self._normalize_string_for_comparison(potential_subtitle)
 
-                subtitle_temp = potential_subtitle.lower()
+                if normalized_subtitle_temp.startswith(self._normalize_string_for_comparison("mehr zu ")):
+                    subtitle_without_prefix = potential_subtitle[len("mehr zu "):].strip()
+                    normalized_subtitle_without_prefix = self._normalize_string_for_comparison(subtitle_without_prefix)
 
-                if subtitle_temp.startswith("mehr zu "):
-                    subtitle_without_prefix = subtitle_temp[len("mehr zu "):].strip()
-                    normalized_subtitle_for_comparison = re.sub(r'[^a-z0-9äöüß]', '', subtitle_without_prefix)
-
-                    if normalized_title_for_comparison == normalized_subtitle_for_comparison:
+                    if normalized_title_for_comparison == normalized_subtitle_without_prefix:
                         logger.debug(f"Discarding redundant subtitle '{potential_subtitle}' for title '{title}'.")
                         detail_data['subtitle'] = None
                     else:
@@ -685,10 +742,13 @@ class TvsHtmlParser:
             episode_text = season_episode_tag[0].text_content().strip()
             episode_match = self.re_season_episode_match.search(episode_text)
             if episode_match:
-                season = episode_match.group(1)
-                episode = episode_match.group(2)
-                detail_data['season_num'] = int(season)
-                detail_data['episode_num'] = int(episode)
+                try:
+                    season = int(episode_match.group(1))
+                    episode = int(episode_match.group(2))
+                    detail_data['season_num'] = season
+                    detail_data['episode_num'] = episode
+                except ValueError:
+                    logger.debug(f"Could not parse season/episode numbers from '{episode_text}'.")
             else:
                 logger.debug(f"Could not parse season/episode from '{episode_text}'.")
 
@@ -722,14 +782,14 @@ class TvsLeanScraper:
         'image_check_status': None
     }
 
-    def __init__(self, channel_ids: Optional[str] = None, days: Optional[int] = None, img_size: Optional[str] = None, check_img: Optional[bool] = None, start_date_str: Optional[str] = None,
+    def __init__(self, channel_ids: Optional[str] = None, days: Optional[int] = None, image_size: Optional[str] = None, check_image: Optional[bool] = None, start_date_str: Optional[str] = None,
                  cache_dir_path: Optional[str] = None, max_workers: int = DEFAULT_MAX_WORKERS, max_retries: int = DEFAULT_MAX_RETRIES,
                  channel_ids_file: Optional[str] = None, min_request_delay: float = DEFAULT_MIN_REQUEST_DELAY,
                  max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
                  max_schedule_retries: int = DEFAULT_MAX_SCHEDULE_RETRIES,
                  disable_cache: bool = DEFAULT_CACHE_DISABLE, cache_ttl: int = DEFAULT_CACHE_TTL_SECONDS,
                  keep_past_cache: bool = False, cache_clear: bool = False, xmltv_timezone: Optional[str] = None,
-                 cache_validation_tolerance: int = DEFAULT_CACHE_VALIDATION_TOLERANCE, img_crop_disable: bool = False,
+                 cache_validation_tolerance: int = DEFAULT_CACHE_VALIDATION_TOLERANCE, image_crop_disable: bool = False,
                  http_timeout: int = DEFAULT_HTTP_TIMEOUT):
         """
         Initializes the TvsLeanScraper instance.
@@ -738,10 +798,10 @@ class TvsLeanScraper:
         :type channel_ids: Optional[str]
         :param days: Number of days to scrape.
         :type days: Optional[int]
-        :param img_size: Desired image size ("150", "300" or "600").
-        :type img_size: Optional[str]
-        :param check_img: Boolean to enable/disable image URL validity checks.
-        :type check_img: Optional[bool]
+        :param image_size: Desired image size ("150", "300" or "600").
+        :type image_size: Optional[str]
+        :param check_image: Boolean to enable/disable image URL validity checks.
+        :type check_image: Optional[bool]
         :param start_date_str: Specific date to scrape in YYYYMMDD format.
         :type start_date_str: Optional[str]
         :param cache_dir_path: Custom directory for cache files.
@@ -771,12 +831,12 @@ class TvsLeanScraper:
         :type xmltv_timezone: Optional[str]
         :param cache_validation_tolerance: Tolerance in bytes for content-length comparison when ETag/Last-Modified fails to return 304.
         :type cache_validation_tolerance: int
-        :param img_crop_disable: If True, disables default image cropping.
-        :type img_crop_disable: bool
+        :param image_crop_disable: If True, disables default image cropping.
+        :type image_crop_disable: bool
         :param http_timeout: Timeout for HTTP requests in seconds.
         :type http_timeout: int
         :raises NotADirectoryError: If the specified cache path exists but is not a directory.
-        :raises SystemExit: If an invalid argument format is provided for `--date` or `--channel-ids`.
+        :raises SystemExit: If an invalid argument format is provided for ``--date`` or ``--channel-ids``.
         """
         self.target_sourceids: Optional[set[str]] = None
         if channel_ids_file:
@@ -810,7 +870,7 @@ class TvsLeanScraper:
                 self.start_date = datetime.strptime(start_date_str, '%Y%m%d').date()
                 self.days_to_scrape: int = 1
             except ValueError:
-                parser.error(f"Invalid DATE format for '--date': '{start_date_str}'. Expected YYYYMMDD (e.g., 20250523).")
+                argparse.ArgumentParser().error(f"Invalid DATE format for '--date': '{start_date_str}'. Expected YYYYMMDD (e.g., 20250523).")
         else:
             self.days_to_scrape = int(days) if days is not None else DEFAULT_DAYS
 
@@ -820,9 +880,9 @@ class TvsLeanScraper:
 
         if self.is_specific_date_set:
             if self.start_date < earliest_allowed_date:
-                parser.error(f"Error: The specified date '{self.start_date.strftime('%Y%m%d')}' is too far in the past. Only dates from '{earliest_allowed_date.strftime('%Y%m%d')}' (yesterday) are allowed.")
+                argparse.ArgumentParser().error(f"Error: The specified date '{self.start_date.strftime('%Y%m%d')}' is too far in the past. Only dates from '{earliest_allowed_date.strftime('%Y%m%d')}' (yesterday) are allowed.")
             if self.start_date > latest_allowed_date:
-                parser.error(f"Error: The specified date '{self.start_date.strftime('%Y%m%d')}' is too far in the future. Only dates up to '{latest_allowed_date.strftime('%Y%m%d')}' are allowed (maximum {MAX_DAYS_TO_SCRAPE} days from today).")
+                argparse.ArgumentParser().error(f"Error: The specified date '{self.start_date.strftime('%Y%m%d')}' is too far in the future. Only dates up to '{latest_allowed_date.strftime('%Y%m%d')}' are allowed (maximum {MAX_DAYS_TO_SCRAPE} days from today).")
 
         if self.days_to_scrape < 1:
             logger.info(f"DAYS value {self.days_to_scrape} is less than 1. Setting to 1 day (today).")
@@ -831,14 +891,14 @@ class TvsLeanScraper:
             logger.warning(f"DAYS value {self.days_to_scrape} exceeds maximum allowed ({MAX_DAYS_TO_SCRAPE}). Setting to {MAX_DAYS_TO_SCRAPE} days.")
             self.days_to_scrape = MAX_DAYS_TO_SCRAPE
 
-        self.img_size: str = img_size if img_size in ["150", "300", "600"] else DEFAULT_IMG_SIZE
-        self.check_img: bool = bool(check_img) if check_img is not None else DEFAULT_IMG_CHECK
-        if self.check_img:
+        self.image_size: str = image_size if image_size in ["150", "300", "600"] else DEFAULT_IMAGE_SIZE
+        self.check_image: bool = bool(check_image) if check_image is not None else DEFAULT_IMAGE_CHECK
+        if self.check_image:
             logger.debug("Image URL validity checks (--img-check) are ENABLED. This may increase scraping time.")
         else:
             logger.debug("Image URL validity checks (--img-check) are DISABLED.")
 
-        self.cache_dir: str = cache_dir_path if cache_dir_path else os.path.join(tempfile.gettempdir(), DEFAULT_CACHE_SUBDIR)
+        self.cache_dir: str = cache_dir_path if cache_dir_path else os.path.join(tempfile.gettempdir(), DEFAULT_CACHE_SUBDIRECTORY)
 
         if os.path.exists(self.cache_dir):
             if not os.path.isdir(self.cache_dir):
@@ -850,7 +910,7 @@ class TvsLeanScraper:
         self.user_agents: List[str] = USER_AGENTS
 
         self.max_workers: int = max_workers
-        self.pool_size: int = max(self.max_workers, 1) * 4 
+        self.pool_size: int = max(self.max_workers, 1) * 4
 
         self.retry_strategy: Retry = Retry(
             total=max_retries,
@@ -882,11 +942,11 @@ class TvsLeanScraper:
 
         self.enable_cache: bool = not disable_cache
         self.cache_ttl: int = cache_ttl
-        self.processed_data_cache_base_dir: str = os.path.join(self.cache_dir, CACHE_PROCESSED_DATA_SUBDIR)
+        self.processed_data_cache_base_dir: str = os.path.join(self.cache_dir, CACHE_PROCESSED_DATA_SUBDIRECTORY)
         self.keep_past_cache: bool = bool(keep_past_cache)
         self.cache_clear_requested: bool = cache_clear
         self.cache_validation_tolerance: int = cache_validation_tolerance
-        self.img_crop_disable: bool = img_crop_disable
+        self.image_crop_disable: bool = image_crop_disable
         self.http_timeout: int = http_timeout
 
         if self.enable_cache:
@@ -973,7 +1033,6 @@ class TvsLeanScraper:
                 elapsed = time.time() - self.last_request_time
                 if elapsed < self.min_request_delay:
                     sleep_time = self.min_request_delay - elapsed
-                    # logger.debug(f"Waiting {sleep_time:.2f} seconds before request to {url}")
                     time.sleep(sleep_time)
                 self.last_request_time = time.time()
 
@@ -992,8 +1051,17 @@ class TvsLeanScraper:
 
                 response.raise_for_status()
                 return response
+            except requests.exceptions.Timeout:
+                logger.error(f"Request timed out for {url} ({method.upper()}) after {timeout} seconds.")
+                return None
+            except requests.exceptions.ConnectionError as e:
+                logger.error(f"Connection error for {url} ({method.upper()}): {e}")
+                return None
+            except requests.exceptions.HTTPError as e:
+                logger.error(f"HTTP error for {url} ({method.upper()}): {e}")
+                return None
             except requests.exceptions.RequestException as e:
-                logger.error(f"Request failed for {url} ({method.upper()}): {e}")
+                logger.error(f"General request failed for {url} ({method.upper()}): {e}")
                 return None
 
     @functools.lru_cache(maxsize=256)
@@ -1109,7 +1177,7 @@ class TvsLeanScraper:
                     logger.warning(f"Error decoding cache: {e}. Deleting corrupted file: {filepath}")
                     f.seek(0)
                     f.truncate()
-                    if os.path.exists(filepath):
+                    if os.path.isfile(filepath):
                         os.remove(filepath)
                     return None
                 finally:
@@ -1173,10 +1241,7 @@ class TvsLeanScraper:
             return []
 
         channels: List[Dict[str, str]] = []
-        new_etag: Optional[str] = None
-        new_last_modified: Optional[str] = None
-        fetched_content_length: Optional[int] = None
-
+        
         cached_data_from_file: Optional[Dict[str, Any]] = None
         cached_channels_list: Optional[List[Dict[str, Any]]] = None
         cached_etag: Optional[str] = None
@@ -1198,17 +1263,17 @@ class TvsLeanScraper:
                     cached_content_length = 0
 
                 if cached_at_str:
-                    cached_at: datetime = datetime.fromisoformat(cached_at_str)
-                    current_time: datetime = datetime.now(timezone.utc) if cached_at.tzinfo else datetime.now()
-                    if (current_time - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
-                        is_cache_fresh = True
+                    try:
+                        cached_at: datetime = datetime.fromisoformat(cached_at_str)
+                        current_time: datetime = datetime.now(timezone.utc) if cached_at.tzinfo else datetime.now()
+                        if (current_time - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
+                            is_cache_fresh = True
+                    except ValueError as e:
+                        logger.warning(f"Invalid timestamp in channel list cache: {cached_at_str}. Error: {e}. Treating cache as stale.")
 
                 if is_cache_fresh and cached_channels_list is not None:
                     channels = cached_channels_list
                     logger.debug("Using fresh channel list from cache.")
-                    new_etag = cached_etag
-                    new_last_modified = cached_last_modified
-                    fetched_content_length = cached_content_length
                     return channels
                 elif cached_channels_list is not None:
                     logger.debug("Channel list cache is stale. Attempting conditional fetch.")
@@ -1223,7 +1288,7 @@ class TvsLeanScraper:
                 logger.debug("Cache disabled. Bypassing channel list cache.")
 
         logger.info(f"Fetching channel list from {CHANNEL_LIST_URL}")
-        response_content, new_etag, new_last_modified, fetched_content_length = self.fetch_url(
+        response_content, temp_new_etag, temp_new_last_modified, temp_fetched_content_length = self.fetch_url(
             CHANNEL_LIST_URL,
             etag=cached_etag,
             last_modified=cached_last_modified,
@@ -1236,18 +1301,15 @@ class TvsLeanScraper:
             if self.enable_cache:
                 cache_content: Dict[str, Any] = {
                     'data': channels,
-                    'etag': new_etag,
-                    'last_modified': new_last_modified,
+                    'etag': temp_new_etag,
+                    'last_modified': temp_new_last_modified,
                     'cached_at': datetime.now(timezone.utc).isoformat(),
-                    'content_length': fetched_content_length,
+                    'content_length': temp_fetched_content_length,
                 }
                 self._save_json_with_lock(self._get_cache_channel_list_filepath(), cache_content)
         elif cached_channels_list is not None:
             logger.debug("Channel list HTML content not modified (304) or semantically identical. Using stale cache.")
             channels = cached_channels_list
-            new_etag = new_etag if new_etag is not None else cached_etag
-            new_last_modified = new_last_modified if new_last_modified is not None else cached_last_modified
-            fetched_content_length = fetched_content_length if fetched_content_length is not None else cached_content_length
         else:
             logger.error(f"Failed to fetch channel list from {CHANNEL_LIST_URL} and no cache available.")
 
@@ -1333,10 +1395,13 @@ class TvsLeanScraper:
 
         is_fresh: bool = False
         if cached_at_str:
-            cached_at: datetime = datetime.fromisoformat(cached_at_str)
-            current_time: datetime = datetime.now(timezone.utc)
-            if (current_time - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
-                is_fresh = True
+            try:
+                cached_at: datetime = datetime.fromisoformat(cached_at_str)
+                current_time: datetime = datetime.now(timezone.utc)
+                if (current_time - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
+                    is_fresh = True
+            except ValueError as e:
+                logger.warning(f"Invalid timestamp in daily cache for {channel_id} on {date.strftime('%Y-%m-%d')}: {cached_at_str}. Error: {e}. Treating cache as stale.")
 
         if is_fresh:
             logger.debug(f"Loaded schedule for {channel_id} on {date.strftime('%Y-%m-%d')} from daily cache (fresh).")
@@ -1434,7 +1499,6 @@ class TvsLeanScraper:
                 final_url = response.url
                 if response.status_code == 200:
                     status = 'avail'
-                    # logger.debug(f"Image {item_id_for_log} is available: {final_url}")
                 elif 400 <= response.status_code < 500:
                     status = 'not_avail'
                     logger.debug(f"Image {item_id_for_log} not available (HTTP {response.status_code}): {final_url}")
@@ -1491,11 +1555,15 @@ class TvsLeanScraper:
 
         is_detail_cache_fresh = False
         if detail_cached_at_str:
-            cached_at_dt = datetime.fromisoformat(detail_cached_at_str)
-            if cached_at_dt.tzinfo is None:
-                cached_at_dt = cached_at_dt.replace(tzinfo=timezone.utc)
-            if (current_time_utc - cached_at_dt).total_seconds() < self.cache_ttl:
-                is_detail_cache_fresh = True
+            try:
+                cached_at_dt = datetime.fromisoformat(detail_cached_at_str)
+                if cached_at_dt.tzinfo is None:
+                    cached_at_dt = cached_at_dt.replace(tzinfo=timezone.utc)
+                if (current_time_utc - cached_at_dt).total_seconds() < self.cache_ttl:
+                    is_detail_cache_fresh = True
+            except ValueError as e:
+                logger.warning(f"Invalid timestamp in detail cache for {item_id_for_log}: {detail_cached_at_str}. Error: {e}. Treating cache as stale.")
+
 
         detail_data = program_item_data.copy()
         new_detail_etag = cached_detail_etag
@@ -1529,11 +1597,11 @@ class TvsLeanScraper:
             else:
                 logger.debug(f"Detail page for {item_id_for_log} validated as not modified/within tolerance. Preserving original cache timestamp.")
 
-        if original_image_url and self.check_img:
+        if original_image_url and self.check_image:
             checked_url, status = self._check_image_url_head_threaded(original_image_url, item_id_for_log)
             detail_data['image_check_final_url'] = checked_url
             detail_data['image_check_status'] = status
-        elif original_image_url and not self.check_img:
+        elif original_image_url and not self.check_image:
             detail_data['image_check_status'] = 'not_checked'
 
         return detail_data, new_detail_etag, new_detail_last_modified, new_detail_content_length
@@ -1579,6 +1647,8 @@ class TvsLeanScraper:
         schedule_html_modified: bool = False
         should_save_cache: bool = False
 
+        current_time_utc = datetime.now(timezone.utc)
+
         if self.enable_cache and not self.cache_clear_requested:
             filepath = self._get_daily_cache_filepath(channel_source_id, current_date)
             cached_data_from_file = self._load_json_with_lock(filepath)
@@ -1594,10 +1664,12 @@ class TvsLeanScraper:
                 cached_xmltv_timezone = cached_data_from_file.get('xmltv_timezone')
 
                 if original_cached_at_str:
-                    cached_at: datetime = datetime.fromisoformat(original_cached_at_str)
-                    current_time: datetime = datetime.now(timezone.utc)
-                    if (current_time - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
-                        is_cache_fresh = True
+                    try:
+                        cached_at: datetime = datetime.fromisoformat(original_cached_at_str)
+                        if (current_time_utc - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
+                            is_cache_fresh = True
+                    except ValueError as e:
+                        logger.warning(f"Invalid timestamp in daily cache for {channel_source_id} on {current_date.strftime('%Y-%m-%d')}: {original_cached_at_str}. Error: {e}. Treating cache as stale.")
 
                 if is_cache_fresh and cached_data is not None:
                     if cached_xmltv_timezone == self.xmltv_timezone:
@@ -1684,44 +1756,54 @@ class TvsLeanScraper:
         detail_futures = {}
         image_check_futures = {}
 
-        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as detail_executor, \
-             concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers * 2) as image_executor:
-
+        with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
             for index, item_data in enumerate(items_for_day):
                 if item_data.get('image_url'):
                     item_data['image_url'] = self._strip_im_parameter_for_cache(item_data['image_url'])
 
-                needs_detail_fetch = item_data.get('link') and (
-                    not self.enable_cache or
-                    self.cache_clear_requested or
-                    (item_data.get('detail_cached_at') is None) or
-                    (datetime.now(timezone.utc) - datetime.fromisoformat(item_data['detail_cached_at']).replace(tzinfo=timezone.utc)).total_seconds() >= self.cache_ttl
-                ) if item_data.get('link') and self.enable_cache else False
+                needs_detail_fetch = False
+                if item_data.get('link'):
+                    if not self.enable_cache or self.cache_clear_requested:
+                        needs_detail_fetch = True
+                    elif item_data.get('detail_cached_at') is None:
+                        needs_detail_fetch = True
+                    else:
+                        try:
+                            cached_at_dt = datetime.fromisoformat(item_data['detail_cached_at'])
+                            if cached_at_dt.tzinfo is None:
+                                cached_at_dt = cached_at_dt.replace(tzinfo=timezone.utc)
+                            if (current_time_utc - cached_at_dt).total_seconds() >= self.cache_ttl:
+                                needs_detail_fetch = True
+                        except ValueError as e:
+                            logger.warning(f"Invalid detail cached_at timestamp for item {item_data.get('title', 'N/A')}: {item_data['detail_cached_at']}. Error: {e}. Forcing detail fetch.")
+                            needs_detail_fetch = True
 
-                needs_image_check_standalone = self.check_img and item_data.get('image_url') and item_data.get('image_check_status') != 'avail' and not needs_detail_fetch
+                needs_image_check_standalone = False
+                if self.check_image and item_data.get('image_url') and not needs_detail_fetch:
+                    if item_data.get('image_check_status') != 'avail':
+                        needs_image_check_standalone = True
 
                 if needs_detail_fetch:
-                    item_id_for_log = f"{channel_source_id}-{current_date.strftime('%Y%m%d')}-{item_data.get('starttime', 'XX')}-{re.sub(r'[^a-zA-Z0-9]', '', item_data.get('title', ''))[:10]}"
-                    future = detail_executor.submit(
+                    item_id_for_log = f"{channel_source_id}-{current_date.strftime('%Y%m%d')}-{item_data.get('starttime', 'XX')}-{self.html_parser._normalize_string_for_comparison(item_data.get('title', ''))[:10]}"
+                    future = executor.submit(
                         self._fetch_detail_and_image_threaded,
                         item_data['link'], item_data.copy(), item_data.get('image_url'), item_id_for_log
                     )
                     detail_futures[future] = index
                 elif needs_image_check_standalone:
-                    item_id_for_log = f"{channel_source_id}-{current_date.strftime('%Y%m%d')}-{item_data.get('starttime', 'XX')}-{re.sub(r'[^a-zA-Z0-9]', '', item_data.get('title', ''))[:10]}"
-                    future = image_executor.submit(self._check_image_url_head_threaded, item_data['image_url'], item_id_for_log)
+                    item_id_for_log = f"{channel_source_id}-{current_date.strftime('%Y%m%d')}-{item_data.get('starttime', 'XX')}-{self.html_parser._normalize_string_for_comparison(item_data.get('title', ''))[:10]}"
+                    future = executor.submit(self._check_image_url_head_threaded, item_data['image_url'], item_id_for_log)
                     image_check_futures[future] = index
                 else:
-                    if not self.check_img and item_data.get('image_url'):
+                    if not self.check_image and item_data.get('image_url'):
                         item_data['image_check_status'] = 'not_checked'
 
             all_futures = list(detail_futures.keys()) + list(image_check_futures.keys())
 
             for future in concurrent.futures.as_completed(all_futures):
                 if self.stop_event.is_set():
-                    logger.info("Stop event detected. Shutting down executors and cancelling remaining tasks.")
-                    detail_executor.shutdown(wait=False, cancel_futures=True)
-                    image_executor.shutdown(wait=False, cancel_futures=True)
+                    logger.info("Stop event detected. Shutting down executor and cancelling remaining tasks.")
+                    executor.shutdown(wait=False, cancel_futures=True)
                     break
 
                 try:
@@ -1735,6 +1817,10 @@ class TvsLeanScraper:
                         items_for_day[index]['image_check_final_url'] = checked_url
                         items_for_day[index]['image_check_status'] = status
 
+                except concurrent.futures.CancelledError:
+                    index_for_log = detail_futures.get(future) or image_check_futures.get(future)
+                    item_title = items_for_day[index_for_log].get('title', 'N/A') if index_for_log is not None else 'N/A'
+                    logger.info(f"Task for item {item_title} on {current_date.strftime('%Y-%m-%d')} was cancelled.")
                 except Exception as exc:
                     index_for_log = detail_futures.get(future) or image_check_futures.get(future)
                     item_title = items_for_day[index_for_log].get('title', 'N/A') if index_for_log is not None else 'N/A'
@@ -1879,57 +1965,69 @@ class TvsLeanScraper:
         all_extracted_items: List[Dict[str, Any]] = []
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=self.max_workers) as executor:
-            for i, channel in enumerate(channel_list_to_scrape):
-                if self.stop_event.is_set():
-                    logger.info("Stop event detected. Aborting further channel processing.")
-                    break
-
-                channel_num: int = i + 1
-                logger.info(f"Scraping channel: {channel['name']} (ID: {channel['source_id']}) [{channel_num}/{total_channels}]")
-
-                channel_tasks: List[Tuple[Dict[str, str], datetime.date]] = []
-                for j in range(self.days_to_scrape):
-                    current_date: datetime.date = self.start_date + timedelta(days=j)
-                    channel_tasks.append((channel, current_date))
-
-                future_to_day_task: Dict[concurrent.futures.Future, Tuple[Dict[str, str], datetime.date]] = {
-                    executor.submit(self._process_channel_day_schedule, ch, date): (ch, date)
-                    for ch, date in channel_tasks
-                }
-
-                for future in concurrent.futures.as_completed(future_to_day_task):
+            try:
+                for i, channel in enumerate(channel_list_to_scrape):
                     if self.stop_event.is_set():
-                        logger.info(f"Stop event detected for channel {channel['name']}. Cancelling remaining tasks for this channel and shutting down executor.")
-                        executor.shutdown(wait=False, cancel_futures=True)
+                        logger.info("Stop event detected. Aborting further channel processing.")
                         break
 
-                    ch_info, current_date_for_task = future_to_day_task[future]
-                    try:
-                        items_for_day: List[Dict[str, Any]] = future.result()
-                        all_extracted_items.extend(items_for_day)
-                        logger.info(f"Finished processing items for {ch_info['name']} on {current_date_for_task.strftime('%Y-%m-%d')}. Extracted {len(items_for_day)} items.")
-                    except concurrent.futures.CancelledError:
-                        logger.info(f"Task for {ch_info['name']} on {current_date_for_task.strftime('%Y-%m-%d')} was cancelled.")
-                    except Exception as exc:
-                        logger.error(f"Error processing schedule for channel {ch_info['name']} on {current_date.strftime('%Y-%m-%d')}: {exc}", exc_info=True)
+                    channel_num: int = i + 1
+                    logger.info(f"Scraping channel: {channel['name']} (ID: {channel['source_id']}) [{channel_num}/{total_channels}]")
+
+                    channel_tasks: List[Tuple[Dict[str, str], datetime.date]] = []
+                    for j in range(self.days_to_scrape):
+                        current_date: datetime.date = self.start_date + timedelta(days=j)
+                        channel_tasks.append((channel, current_date))
+
+                    future_to_day_task: Dict[concurrent.futures.Future, Tuple[Dict[str, str], datetime.date]] = {
+                        executor.submit(self._process_channel_day_schedule, ch, date): (ch, date)
+                        for ch, date in channel_tasks
+                    }
+
+                    for future in concurrent.futures.as_completed(future_to_day_task):
+                        if self.stop_event.is_set():
+                            logger.info(f"Stop event detected for channel {channel['name']}. Cancelling remaining tasks for this channel.")
+                            break
+
+                        ch_info, current_date_for_task = future_to_day_task[future]
+                        try:
+                            items_for_day: List[Dict[str, Any]] = future.result()
+                            all_extracted_items.extend(items_for_day)
+                            logger.info(f"Finished processing items for {ch_info['name']} on {current_date_for_task.strftime('%Y-%m-%d')}. Extracted {len(items_for_day)} items.")
+                        except concurrent.futures.CancelledError:
+                            logger.info(f"Task for {ch_info['name']} on {current_date_for_task.strftime('%Y-%m-%d')} was cancelled.")
+                        except Exception as exc:
+                            logger.error(f"Error processing schedule for channel {ch_info['name']} on {current_date_for_task.strftime('%Y-%m-%d')}: {exc}", exc_info=True)
+            except KeyboardInterrupt:
+                logger.info("KeyboardInterrupt detected. Shutting down scraper gracefully.")
+                self.stop_event.set()
+                raise
 
         logger.info(f"Scraping completed. Total items extracted: {len(all_extracted_items)}")
 
         return all_extracted_items
 
-def _build_image_url_with_params(original_url: str, target_width: int, img_crop_disable: bool) -> str:
+    def shutdown(self):
+        """
+        Performs cleanup operations before exiting the scraper.
+        """
+        logger.debug("Closing requests session.")
+        self.session.close()
+
+
+def _build_image_url_with_params(original_url: str, target_width: int, image_crop_disable: bool) -> str:
     """
     Constructs an image URL with specified resize and optional crop parameters for XMLTV output.
-    If img_crop_disable is False, a default 16:9 crop (800x450) is added, replacing any existing crop.
-    If img_crop_disable is True, any existing crop instructions are removed.
+    If image_crop_disable is False, a default 16:9 crop (800x450) is added, replacing any existing crop.
+    If image_crop_disable is True, any existing crop instructions are removed.
     The 'Resize,width={target_width}' parameter is always added or updated.
 
     :param original_url: The original image URL.
     :type original_url: str
     :param target_width: The desired width for resizing.
     :type target_width: int
-    :param img_crop_disable: If True, disables default image cropping.
-    :type img_crop_disable: bool
+    :param image_crop_disable: If True, disables default image cropping.
+    :type image_crop_disable: bool
     :returns: The modified image URL.
     :rtype: str
     """
@@ -1951,7 +2049,7 @@ def _build_image_url_with_params(original_url: str, target_width: int, img_crop_
 
     final_im_parts = []
 
-    if not img_crop_disable:
+    if not image_crop_disable:
         final_im_parts.append('Crop,rect=(0,0,800,450),gravity=Center')
 
     final_im_parts.extend(im_instructions_unencoded)
@@ -1971,7 +2069,7 @@ def _build_image_url_with_params(original_url: str, target_width: int, img_crop_
     return parsed_url._replace(query=new_query_string).geturl()
 
 
-def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_timezone: str = 'Europe/Berlin', img_crop_disable: bool = False) -> None:
+def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_timezone: str = 'Europe/Berlin', image_crop_disable: bool = False) -> None:
     """
     Generates an XMLTV-compliant XML file from the scraped data using lxml.etree.
     Applies XML character sanitation to all string content.
@@ -1983,10 +2081,11 @@ def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_time
     :type output_file: str
     :param xmltv_timezone: The timezone string to use for XMLTV header and program times.
     :type xmltv_timezone: str
-    :param img_crop_disable: If True, disables default image cropping.
-    :type img_crop_disable: bool
+    :param image_crop_disable: If True, disables default image cropping.
+    :type image_crop_disable: bool
     :returns: None
     :rtype: None
+    :raises Exception: If an error occurs during XMLTV file generation.
     """
     logger.debug(f"Generating XMLTV file: {output_file} using lxml.etree.")
 
@@ -2179,7 +2278,7 @@ def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_time
                 processed_image_url = _build_image_url_with_params(
                     item['image_url'],
                     width,
-                    img_crop_disable
+                    image_crop_disable
                 )
                 image_elem = lxml.etree.SubElement(programme_elem, 'image', type='still', size=size_attr_value, orient='L', system='tvsp')
                 image_elem.text = processed_image_url
@@ -2278,19 +2377,19 @@ Examples:
         '--img-size',
         type=str,
         choices=['150', '300', '600'],
-        default=DEFAULT_IMG_SIZE,
-        help=f'Image size to extract ("150", "300" or "600"). Default: {DEFAULT_IMG_SIZE}.'
+        default=DEFAULT_IMAGE_SIZE,
+        help=f'Image size to extract ("150", "300" or "600"). Default: {DEFAULT_IMAGE_SIZE}.'
     )
     parser.add_argument(
         '--img-check',
         action='store_true',
-        dest='check_img',
+        dest='check_image',
         help='If set, an additional HEAD request will be performed to check the validity of image URLs. This may increase scraping time.'
     )
     parser.add_argument(
         '--img-crop-disable',
         action='store_true',
-        dest='img_crop_disable',
+        dest='image_crop_disable',
         help='If set, disables the default 16:9 image cropping for images without existing crop instructions.'
     )
 
@@ -2324,7 +2423,7 @@ Examples:
     parser.add_argument(
         '--cache-dir',
         type=str,
-        help=f'Specifies a custom directory for cache files. Default is a subdirectory "{DEFAULT_CACHE_SUBDIR}" in the system temporary directory.'
+        help=f'Specifies a custom directory for cache files. Default is a subdirectory "{DEFAULT_CACHE_SUBDIRECTORY}" in the system temporary directory.'
     )
     parser.add_argument(
         '--cache-clear',
@@ -2433,7 +2532,7 @@ Examples:
     logging.root.setLevel(numeric_level)
     logger.setLevel(numeric_level)
 
-    base_cache_path: str = args.cache_dir if args.cache_dir else os.path.join(tempfile.gettempdir(), DEFAULT_CACHE_SUBDIR)
+    base_cache_path: str = args.cache_dir if args.cache_dir else os.path.join(tempfile.gettempdir(), DEFAULT_CACHE_SUBDIRECTORY)
 
     if args.clear_cache:
         if os.path.exists(base_cache_path):
@@ -2446,8 +2545,8 @@ Examples:
     scraper = TvsLeanScraper(
         channel_ids=args.channel_ids,
         days=args.days,
-        img_size=args.img_size,
-        check_img=args.check_img,
+        image_size=args.img_size,
+        check_image=args.check_image,
         start_date_str=args.date,
         cache_dir_path=args.cache_dir,
         max_workers=args.max_workers,
@@ -2462,7 +2561,7 @@ Examples:
         cache_clear=args.clear_cache,
         xmltv_timezone=args.xmltv_timezone,
         cache_validation_tolerance=args.cache_validation_tolerance,
-        img_crop_disable=args.img_crop_disable,
+        image_crop_disable=args.image_crop_disable,
         http_timeout=args.timeout_http
     )
 
@@ -2479,11 +2578,15 @@ Examples:
         sys.exit(0)
 
     start_time: float = time.time()
+    extracted_data: List[Dict[str, Any]] = []
     try:
-        extracted_data: List[Dict[str, Any]] = scraper.run_scraper()
+        extracted_data = scraper.run_scraper()
     except KeyboardInterrupt:
-        print("\nUser interruption (Ctrl-C)")
+        print("\nUser interruption (Ctrl-C). Exiting gracefully.")
         sys.exit(1)
+    finally:
+        scraper.shutdown()
+
     end_time: float = time.time()
 
     elapsed_time: float = end_time - start_time
@@ -2502,14 +2605,23 @@ Examples:
             output_filename = f"{output_filename}.json"
 
         logger.info(f"Writing items to {output_filename} in JSON array format.")
-        with open(output_filename, 'w', encoding='utf-8') as f:
-            json.dump(extracted_data, f, ensure_ascii=False, indent=4)
-        logger.info(f"Data successfully saved. Total {len(extracted_data)} items written.")
+        try:
+            with open(output_filename, 'w', encoding='utf-8') as f:
+                json.dump(extracted_data, f, ensure_ascii=False, indent=4)
+            logger.info(f"Data successfully saved. Total {len(extracted_data)} items written.")
+        except IOError as e:
+            logger.error(f"Error writing JSON output file {output_filename}: {e}")
+        except Exception as e:
+            logger.error(f"Unexpected error saving JSON data to {output_filename}: {e}")
+
     elif args.output_format == 'xmltv':
         if output_filename == default_output_file_arg and not output_filename.endswith('.xml'):
             output_filename = f"{output_filename}.xml"
 
-        generate_xmltv(extracted_data, output_filename, scraper.xmltv_timezone, scraper.img_crop_disable)
+        try:
+            generate_xmltv(extracted_data, output_filename, scraper.xmltv_timezone, scraper.image_crop_disable)
+        except Exception as e:
+            logger.error(f"Failed to generate XMLTV file: {e}")
 
     else:
         logger.warning("No data extracted or invalid output format specified. Output file will not be created.")
