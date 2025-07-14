@@ -680,7 +680,7 @@ class TvsHtmlParser:
                 detail_data['presenter'].extend(names)
             elif "Kommentiert von:" in role_title:
                 detail_data['commentator'].extend(names)
-            elif "Mit dabei:" in role_title:
+            elif "Mit dabei:" in role_title or "Rateteam:" in role_title:
                 detail_data['guest'].extend(names)
             else:
                 logger.debug(f"Unknown credit role found: {role_title}")
@@ -725,7 +725,7 @@ class TvsHtmlParser:
                 title = detail_data['title'].strip()
 
                 normalized_title_for_comparison = self._normalize_string_for_comparison(title)
-                normalized_subtitle_temp = self._normalize_string_for_comparison(potential_subtitle)
+                normalized_subtitle_temp = self._normalize_string_for_comparison("mehr zu ")
 
                 if normalized_subtitle_temp.startswith(self._normalize_string_for_comparison("mehr zu ")):
                     subtitle_without_prefix = potential_subtitle[len("mehr zu "):].strip()
