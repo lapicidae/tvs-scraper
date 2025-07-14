@@ -1152,8 +1152,10 @@ class TvsLeanScraper:
             if cached_content_length is not None:
                 logger.debug(f"Resource {url} content length differs beyond tolerance. "
                              f"Fetched: {fetched_content_length}, Cached: {cached_content_length}, Tolerance: {self.cache_validation_tolerance}. Fetching new content.")
+            elif etag is not None or last_modified is not None:
+                logger.debug(f"Resource {url} was not 304 Not Modified despite ETag/Last-Modified. Fetching new content.")
             else:
-                logger.debug(f"No cached content length for {url} or conditional GET failed. Fetching new content.")
+                logger.debug(f"No cache metadata available for {url}. Performing initial fetch.")
             return response.text, new_etag, new_last_modified, fetched_content_length
 
     def _load_json_with_lock(self, filepath: str) -> Optional[Dict[str, Any]]:
@@ -1577,7 +1579,11 @@ class TvsLeanScraper:
         if self.enable_cache and not self.cache_clear_requested and is_detail_cache_fresh:
             logger.debug(f"Detail page for {item_id_for_log} is fresh in cache. Using existing detail data.")
         else:
-            logger.debug(f"Detail cache for {item_id_for_log} is stale or needs refresh. Attempting conditional fetch.")
+            if detail_cached_at_str is None:
+                logger.debug(f"No detail cache metadata found for {item_id_for_log}. Performing initial fetch.")
+            else:
+                logger.debug(f"Detail cache for {item_id_for_log} is stale or needs refresh. Attempting conditional fetch.")
+            
             detail_response_content, temp_new_detail_etag, temp_new_detail_last_modified, temp_new_detail_content_length = self.fetch_url(
                 detail_url,
                 etag=cached_detail_etag,
@@ -1591,7 +1597,7 @@ class TvsLeanScraper:
                 detail_data['detail_etag'] = temp_new_detail_etag
                 detail_data['detail_last_modified'] = temp_new_detail_last_modified
                 detail_data['detail_content_length'] = temp_new_detail_content_length
-                logger.debug(f"Detail page for {item_id_for_log} fetched and parsed new content. Updated cache timestamp.")
+                logger.debug(f"Detail page for {item_id_for_log} fetched and parsed new content. Cache timestamp updated.")
                 new_detail_etag = temp_new_detail_etag
                 new_detail_last_modified = temp_new_detail_last_modified
                 new_detail_content_length = temp_new_detail_content_length
