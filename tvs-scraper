@@ -1633,9 +1633,11 @@ class TvsLeanScraper:
 
         items_for_day: List[Dict[str, Any]] = []
         processed_items: List[Dict[str, Any]] = []
+        
         new_etag: Optional[str] = None
         new_last_modified: Optional[str] = None
         fetched_content_length: Optional[int] = None
+        
         original_cached_at_str: Optional[str] = None
 
         cached_data_from_file: Optional[Dict[str, Any]] = None
@@ -1645,7 +1647,6 @@ class TvsLeanScraper:
         cached_content_length: Optional[int] = None
         cached_xmltv_timezone: Optional[str] = None
         is_cache_fresh: bool = False
-        schedule_html_modified: bool = False
         should_save_cache: bool = False
 
         current_time_utc = datetime.now(timezone.utc)
@@ -1664,6 +1665,10 @@ class TvsLeanScraper:
                     cached_content_length = 0
                 cached_xmltv_timezone = cached_data_from_file.get('xmltv_timezone')
 
+                new_etag = cached_etag
+                new_last_modified = cached_last_modified
+                fetched_content_length = cached_content_length
+
                 if original_cached_at_str:
                     try:
                         cached_at: datetime = datetime.fromisoformat(original_cached_at_str)
@@ -1680,9 +1685,12 @@ class TvsLeanScraper:
                         logger.info(f"Cached data for {channel_name} on {current_date.strftime('%Y-%m-%d')} is fresh but timezone differs (cached: {cached_xmltv_timezone}, requested: {self.xmltv_timezone}). Reprocessing timestamps.")
                         items_for_day = cached_data
                         should_save_cache = True
-                    new_etag = cached_etag
-                    new_last_modified = cached_last_modified
-                    fetched_content_length = cached_content_length
+                elif cached_data is not None:
+                    logger.debug("Channel list cache is stale. Attempting conditional fetch.")
+                else:
+                    logger.debug("Channel list cache found but data is malformed. Performing full fetch.")
+            else:
+                logger.debug("Channel list cache not found or unreadable. Performing full fetch.")
         else:
             if self.cache_clear_requested:
                 logger.debug(f"Cache clear requested. Bypassing cache load for {channel_name} on {current_date.strftime('%Y-%m-%d')}.")
@@ -1699,7 +1707,7 @@ class TvsLeanScraper:
                     attempt_str: str = f" (Attempt {attempt + 1}/{self.max_schedule_retries + 1})" if attempt > 0 else ""
                     logger.debug(f"Attempting to fetch schedule for {channel_name} on {current_date.strftime('%Y-%m-%d')} from {schedule_url}{attempt_str}")
 
-                    response_content, temp_new_etag, temp_new_last_modified, temp_fetched_content_length = self.fetch_url(
+                    response_content, temp_new_etag, temp_new_last_modified, temp_fetched_content_length_from_fetch = self.fetch_url(
                         schedule_url,
                         etag=cached_etag,
                         last_modified=cached_last_modified,
@@ -1722,15 +1730,32 @@ class TvsLeanScraper:
                                 'image_check_final_url': None,
                                 'image_check_status': None
                             })
-                        schedule_html_modified = True
                         should_save_cache = True
                         new_etag = temp_new_etag
                         new_last_modified = temp_new_last_modified
-                        fetched_content_length = temp_fetched_content_length
+                        fetched_content_length = temp_fetched_content_length_from_fetch
                         break
                     elif cached_data is not None:
                         logger.debug(f"HTML content for {channel_name} on {current_date.strftime('%Y-%m-%d')} not modified (304) or semantically identical. Using stale cache.")
-                        items_for_day = cached_data
+                        items_for_day = cached_data.copy()
+                        for item_data in items_for_day:
+                            detail_cached_at_str = item_data.get('detail_cached_at')
+                            if detail_cached_at_str:
+                                try:
+                                    cached_at_dt = datetime.fromisoformat(detail_cached_at_str)
+                                    if cached_at_dt.tzinfo is None:
+                                        cached_at_dt = cached_at_dt.replace(tzinfo=timezone.utc)
+                                    if (current_time_utc - cached_at_dt).total_seconds() >= self.cache_ttl:
+                                        logger.debug(f"Detail cache for '{item_data.get('title', 'N/A')}' is stale. Forcing re-fetch.")
+                                        item_data['detail_cached_at'] = None
+                                        should_save_cache = True
+                                except ValueError:
+                                    logger.warning(f"Invalid detail cached_at timestamp for item {item_data.get('title', 'N/A')}. Forcing re-fetch.")
+                                    item_data['detail_cached_at'] = None
+                                    should_save_cache = True
+                            else:
+                                item_data['detail_cached_at'] = None
+                                should_save_cache = True
                         break
                     else:
                         logger.warning(f"Could not retrieve or parse program for {channel_name} on {current_date.strftime('%Y-%m-%d')}. No data available. Retrying...")
@@ -1812,6 +1837,7 @@ class TvsLeanScraper:
                         index = detail_futures[future]
                         detailed_data, _, _, _ = future.result()
                         items_for_day[index].update(detailed_data)
+                        should_save_cache = True 
                     elif future in image_check_futures:
                         index = image_check_futures[future]
                         checked_url, status = future.result()
@@ -1838,9 +1864,7 @@ class TvsLeanScraper:
             processed_items.append(item_data)
 
         if self.enable_cache and should_save_cache:
-            final_original_cached_at_str = original_cached_at_str if original_cached_at_str is not None else datetime.now(timezone.utc).isoformat()
-
-            cache_save_timestamp = datetime.now(timezone.utc).isoformat() if schedule_html_modified else final_original_cached_at_str
+            cache_save_timestamp = datetime.now(timezone.utc).isoformat()
             self._save_daily_json_cache(
                 channel_source_id,
                 current_date,
