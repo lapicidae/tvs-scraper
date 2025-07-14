@@ -288,7 +288,11 @@ class TvsHtmlParser:
                         except ValueError:
                             logger.debug(f"Could not parse FSK rating from '{fsk_match.group(1)}'.")
                 elif target_key == 'screenplay':
-                    detail_data[target_key] = f"{detail_data[target_key]}, {sanitized_dd_text}" if detail_data[target_key] else sanitized_dd_text
+                    if sanitized_dd_text:
+                        if detail_data[target_key]:
+                            detail_data[target_key] = f"{detail_data[target_key]}, {sanitized_dd_text}"
+                        else:
+                            detail_data[target_key] = sanitized_dd_text
                 else:
                     detail_data[target_key] = sanitized_dd_text
 
@@ -764,7 +768,7 @@ class TvsLeanScraper:
     _DETAIL_DATA_TEMPLATE: Dict[str, Any] = {
         'shortdescription': None, 'longdescription': None, 'genre': None,
         'original_title': None, 'country': None, 'year': None, 'duration': None,
-        'parentalrating': None, 'cast': None, 'director': None, 'screenplay': "",
+        'parentalrating': None, 'cast': None, 'director': None, 'screenplay': None,
         'camera': None, 'numrating': None, 'rating': None, 'txtrating': None,
         'imdbrating': None, 'keyword': None,
         'subtitle': None,
@@ -2032,12 +2036,11 @@ def _build_image_url_with_params(original_url: str, target_width: int) -> str:
 
     if raw_query_string:
         for part in raw_query_string.split('&'):
-            if not part.startswith('im='): # Keep only parameters that are not 'im='
+            if not part.startswith('im='):
                 other_query_parts.append(part)
 
     final_im_parts = []
 
-    # Always add the desired Resize instruction
     final_im_parts.append(f'Resize,width={target_width}')
 
     im_value_for_url = ';'.join(final_im_parts)
@@ -2261,7 +2264,7 @@ def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_time
                     item['image_url'],
                     width
                 )
-                image_elem = lxml.etree.SubElement(programme_elem, 'image', type='still', size=size_attr_value, orient='L', system='tvsp')
+                image_elem = lxml.etree.SubElement(programme_elem, 'image', size=size_attr_value, orient='L', system='TVSpielfilm')
                 image_elem.text = processed_image_url
 
     tree = lxml.etree.ElementTree(tv_element)
