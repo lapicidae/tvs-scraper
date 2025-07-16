@@ -2,15 +2,34 @@
 
 set -euo pipefail
 
-epgdConf='/epgd/config/epgd.conf'
-chMap='/epgd/config/channelmap.conf'
-cacheDir='/epgd/cache/tvs-xmltv'
-xmltv_tld='tvs'
+## config
+# tvsScraperPath='/usr/bin/tvs-scraper'		# Path to the tvs-scraper executable
+# cacheDir='/epgd/cache/tvs-xmltv'			# Cache directory used by the tvs-scraper
 
-# Default syslog tag for the bash script itself
-SYSLOG_BASH_TAG="${SYSLOG_BASH_TAG:-scraper}"
-# Flag to control if bash script output goes to syslog
-USE_SYSLOG_BASH="${USE_SYSLOG_BASH:-true}"
+# epgdConf='/epgd/config/epgd.conf'			# Path to config file of 'vdr-epg-daemon'
+# chMap='/epgd/config/channelmap.conf'		# Path to channel mapping of 'vdr-epg-daemon'
+# xmltvTLD='tvs'							# Default channel ID domain used in 'channelmap.conf' and xmltv -> No changes should be necessary
+
+# outFile='/path/to/your/output.xml'		# Path to the XMLTV output file (optional)
+
+# logLevel='WARNING'						# Sets the logging level. Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+# syslogEnable='true'						# The output is forwarded to syslog
+# syslogIdent='tvs-scraper'					# Syslog identifier
+
+alwaysUpdate=true							# Skip all checks and overwrite the output file
+
+
+## defaults (do not change)
+alwaysUpdate="${alwaysUpdate:-false}"
+cacheDir="${cacheDir:-"/var/cache/tvs-scraper"}"
+chMap="${chMap:-"/etc/epgd/channelmap.conf"}"
+epgdConf="${epgdConf:-"/etc/epgd/epgd.conf"}"
+logLevel="${logLevel:-"INFO"}"
+outFile="${outFile:-}"						# Initialize outFile variable, will be overridden if config or epgd.conf provides it
+syslogEnable="${syslogEnable:-false}"
+syslogIdent="${syslogIdent:-"tvs-scraper"}"
+tvsScraperPath="${tvsScraperPath:-"/usr/local/bin/tvs-scraper"}"
+xmltvTLD="${xmltvTLD:-"tvs"}"
 
 # Joins array elements with a separator
 join() {
@@ -34,35 +53,15 @@ log_message() {
 		formatted="${formatted/\%s/$arg}"
 	done
 
-	if [ "$USE_SYSLOG_BASH" = true ]; then
-		logger -t "$SYSLOG_BASH_TAG" "$formatted"
+	if [ "$syslogEnable" = true ]; then
+		logger -t "$syslogIdent" "$formatted"
 	else
 		printf '%s\n' "$formatted"
 	fi
 }
 
-# Parse command-line arguments for the bash script itself
-# This allows controlling the bash script's logging behavior
-while [[ "$#" -gt 0 ]]; do
-	case "$1" in
-		--disable-syslog)
-			USE_SYSLOG_BASH=false
-			shift
-			;;
-		--syslog-ident)
-			SYSLOG_BASH_TAG="$2"
-			shift
-			shift
-			;;
-		*)
-			break
-			;;
-	esac
-done
-
-# Store remaining arguments to pass to the Python script
+# Store arguments to pass to the Python script
 PYTHON_SCRIPT_ARGS=("$@")
-
 
 # Check config file
 if [ ! -f "$epgdConf" ]; then
@@ -70,13 +69,15 @@ if [ ! -f "$epgdConf" ]; then
   exit 1
 fi
 
-# Extract 'xmltv.input' value
-# The sed command has been adjusted to extract only the path, without "xmltv.input = "
-raw_outFile_value=$(grep -E '^[[:space:]]*xmltv.input[[:space:]]*=' "$epgdConf" | \
-					sed -E 's/^[[:space:]]*xmltv.input[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/' | \
-					tail -n 1)
-
-outFile="${raw_outFile_value:-/epgd/cache/tvs_xmltv.xml}"
+# Determine outFile path
+# If outFile is already set (e.g., via initial config), use it.
+if [ -z "$outFile" ]; then
+	# If outFile is not set, try to extract 'xmltv.input' value from epgdConf
+	raw_outFile_value=$(grep -E '^[[:space:]]*xmltv.input[[:space:]]*=' "$epgdConf" | \
+						sed -E 's/^[[:space:]]*xmltv.input[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/' | \
+						tail -n 1)
+	outFile="${raw_outFile_value:-"$cacheDir/tvs_xmltv.xml"}" # Fallback to default if not found in epgdConf
+fi
 
 log_message "Using output file: %s" "$outFile"
 
@@ -85,7 +86,7 @@ output_dir=$(dirname "${outFile}")
 
 if [ ! -d "$output_dir" ]; then
 	log_message "Warning: Output directory '%s' does not exist and is being created." "$output_dir" >&2
-	mkdir -p "$cacheDir"
+	mkdir -p "$output_dir"
 elif [ ! -w "$output_dir" ]; then
 	log_message "Error: Output directory '%s' is not writable." "$output_dir" >&2
 	exit 1
@@ -136,23 +137,28 @@ UpdateTimeMinutes=$((UpdateTime * 60))
 # By default, we assume an update is NOT needed.
 update_needed=false
 
-# 1. Condition: Does the output file NOT exist? Then an update is needed.
-if [ ! -f "$outFile" ]; then
-	log_message "Output file '%s' does not exist. Update needed." "$outFile"
-	update_needed=true
-# 2. Condition: Does the output file exist, but is it older than 'UpdateTime' hours?
-#    -mmin +X checks if the file is OLDER than X minutes.
-elif find "$outFile" -mmin +"$UpdateTimeMinutes" -print -quit | grep -q .; then
-	log_message "'%s' is older than %s hours. Update needed." "$outFile" "$UpdateTime"
-	update_needed=true
-# 3. Condition: Is the mapping file newer than the output file?
-#    This is important to react to mapping changes.
-elif [ "$chMap" -nt "$outFile" ]; then
-	log_message "Mapping file '%s' is newer than output file '%s'. Update needed." "$chMap" "$outFile"
+if [ "$alwaysUpdate" = true ]; then
+	log_message "Update is enforced."
 	update_needed=true
 else
-	# None of the conditions for an update are met.
-	log_message "Output file '%s' is up-to-date and mapping unchanged. No update needed." "$outFile"
+	# 1. Condition: Does the output file NOT exist? Then an update is needed.
+	if [ ! -f "$outFile" ]; then
+		log_message "Output file '%s' does not exist. Update needed." "$outFile"
+		update_needed=true
+	# 2. Condition: Does the output file exist, but is it older than 'UpdateTime' hours?
+	#    -mmin +X checks if the file is OLDER than X minutes.
+	elif find "$outFile" -mmin +"$UpdateTimeMinutes" -print -quit | grep -q .; then
+		log_message "'%s' is older than %s hours. Update needed." "$outFile" "$UpdateTime"
+		update_needed=true
+	# 3. Condition: Is the mapping file newer than the output file?
+	#    This is important to react to mapping changes.
+	elif [ "$chMap" -nt "$outFile" ]; then
+		log_message "Mapping file '%s' is newer than output file '%s'. Update needed." "$chMap" "$outFile"
+		update_needed=true
+	else
+		# None of the conditions for an update are met.
+		log_message "Output file '%s' is up-to-date and mapping unchanged. No update needed." "$outFile"
+	fi
 fi
 
 # Extract channel IDs
@@ -161,7 +167,7 @@ if [ ! -f "$chMap" ]; then
 	exit 1
 fi
 
-mapfile -t channel_ids_array < <(grep '^xmltv:' "$chMap" | sed -E "s/^xmltv:([^.]+)\\.${xmltv_tld}.*$/\\1/")
+mapfile -t channel_ids_array < <(grep '^xmltv:' "$chMap" | sed -E "s/^xmltv:([^.]+)\\.${xmltvTLD}.*$/\\1/")
 
 # Join channel IDs with a comma
 joined_channel_ids=""
@@ -173,8 +179,11 @@ fi
 if [ "$update_needed" = true ]; then
 	if [ -n "$joined_channel_ids" ]; then
 		log_message "Executing tvs-scraper for IDs: %s" "${joined_channel_ids}"
-		# Pass all remaining arguments from the bash script's command line to the python script.
-		/usr/local/bin/tvs-scraper --channel-ids "${joined_channel_ids}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-syslog --log-syslog-tag scraper --log-level INFO "${PYTHON_SCRIPT_ARGS[@]}"
+		if [ "$syslogEnable" = true ]; then
+			"$tvsScraperPath" --channel-ids "${joined_channel_ids}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-syslog --log-syslog-tag "${syslogIdent}" --log-level "${logLevel}" "${PYTHON_SCRIPT_ARGS[@]}"
+		else
+			"$tvsScraperPath" --channel-ids "${joined_channel_ids}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-level "${logLevel}" "${PYTHON_SCRIPT_ARGS[@]}"
+		fi
 	else
 		log_message "No XMLTV channel IDs found in '%s'. tvs-scraper will not be executed." "$chMap"
 	fi
