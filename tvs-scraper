@@ -337,7 +337,7 @@ class TvsHtmlParser:
                         else:
                             logger.debug(f"Tracking data for {name} has unexpected structure: {tracking_data_str}")
                     except json.JSONDecodeError as e:
-                        logger.debug(f"Could not parse data-tracking-point for {name}: {tracking_data_str}. Error: {e}")
+                        logger.debug(f"Could not parse data-tracking-point for {name}: {e}")
                     except Exception as e:
                         logger.debug(f"Unexpected error processing data-tracking-point for {name}: {e}")
 
@@ -786,7 +786,7 @@ class TvsLeanScraper:
         'image_check_status': None
     }
 
-    def __init__(self, channel_ids: Optional[str] = None, days: Optional[int] = None, image_size: Optional[str] = None, check_image: Optional[bool] = None, start_date_str: Optional[str] = None,
+    def __init__(self, channel_ids: Optional[str] = None, days: Optional[int] = None, image_size: Optional[str] = None, check_image: Optional[bool] = None, start_date_obj: Optional[datetime.date] = None,
                  cache_dir_path: Optional[str] = None, max_workers: int = DEFAULT_MAX_WORKERS, max_retries: int = DEFAULT_MAX_RETRIES,
                  channel_ids_file: Optional[str] = None, min_request_delay: float = DEFAULT_MIN_REQUEST_DELAY,
                  max_concurrent_requests: int = DEFAULT_MAX_CONCURRENT_REQUESTS,
@@ -806,8 +806,8 @@ class TvsLeanScraper:
         :type image_size: Optional[str]
         :param check_image: Boolean to enable/disable image URL validity checks.
         :type check_image: Optional[bool]
-        :param start_date_str: Specific date to scrape in YYYYMMDD format.
-        :type start_date_str: Optional[str]
+        :param start_date_obj: Specific date to scrape as a datetime.date object.
+        :type start_date_obj: Optional[datetime.date]
         :param cache_dir_path: Custom directory for cache files.
         :type cache_dir_path: Optional[str]
         :param max_workers: Maximum number of concurrent workers.
@@ -838,7 +838,6 @@ class TvsLeanScraper:
         :param http_timeout: Timeout for HTTP requests in seconds.
         :type http_timeout: int
         :raises NotADirectoryError: If the specified cache path exists but is not a directory.
-        :raises SystemExit: If an invalid argument format is provided for ``--date`` or ``--channel-ids``.
         """
         self.target_sourceids: Optional[set[str]] = None
         if channel_ids_file:
@@ -863,35 +862,12 @@ class TvsLeanScraper:
         else:
             logger.debug("No specific channels targeted. Crawling all found channels.")
 
-        self.is_specific_date_set: bool = False
-        self.start_date: datetime.date = datetime.now().date()
-
-        if start_date_str:
-            self.is_specific_date_set = True
-            try:
-                self.start_date = datetime.strptime(start_date_str, '%Y%m%d').date()
-                self.days_to_scrape: int = 1
-            except ValueError:
-                argparse.ArgumentParser().error(f"Invalid DATE format for '--date': '{start_date_str}'. Expected YYYYMMDD (e.g., 20250523).")
-        else:
-            self.days_to_scrape = int(days) if days is not None else DEFAULT_DAYS
-
-        today = datetime.now().date()
-        earliest_allowed_date = today - timedelta(days=1)
-        latest_allowed_date = today + timedelta(days=MAX_DAYS_TO_SCRAPE - 1)
-
+        self.is_specific_date_set: bool = start_date_obj is not None
+        self.start_date: datetime.date = start_date_obj if start_date_obj else datetime.now().date()
+        
+        self.days_to_scrape = int(days) if days is not None else DEFAULT_DAYS
         if self.is_specific_date_set:
-            if self.start_date < earliest_allowed_date:
-                argparse.ArgumentParser().error(f"Error: The specified date '{self.start_date.strftime('%Y%m%d')}' is too far in the past. Only dates from '{earliest_allowed_date.strftime('%Y%m%d')}' (yesterday) are allowed.")
-            if self.start_date > latest_allowed_date:
-                argparse.ArgumentParser().error(f"Error: The specified date '{self.start_date.strftime('%Y%m%d')}' is too far in the future. Only dates up to '{latest_allowed_date.strftime('%Y%m%d')}' are allowed (maximum {MAX_DAYS_TO_SCRAPE} days from today).")
-
-        if self.days_to_scrape < 1:
-            logger.info(f"DAYS value {self.days_to_scrape} is less than 1. Setting to 1 day (today).")
             self.days_to_scrape = 1
-        elif self.days_to_scrape > MAX_DAYS_TO_SCRAPE:
-            logger.warning(f"DAYS value {self.days_to_scrape} exceeds maximum allowed ({MAX_DAYS_TO_SCRAPE}). Setting to {MAX_DAYS_TO_SCRAPE} days.")
-            self.days_to_scrape = MAX_DAYS_TO_SCRAPE
 
         self.image_size: str = image_size if image_size in ["150", "300", "600"] else DEFAULT_IMAGE_SIZE
         self.check_image: bool = bool(check_image) if check_image is not None else DEFAULT_IMAGE_CHECK
@@ -2272,6 +2248,56 @@ def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_time
         raise
 
 
+def validate_days(value_str: str) -> int:
+    """
+    Validates the number of days to scrape.
+
+    :param value_str: The string value from the command line.
+    :type value_str: str
+    :returns: The validated integer value.
+    :rtype: int
+    :raises argparse.ArgumentTypeError: If the value is not a valid integer or outside the allowed range.
+    """
+    try:
+        days = int(value_str)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid DAYS value: '{value_str}'. Must be an integer.")
+
+    if days < 1:
+        logger.info(f"DAYS value {days} is less than 1. Setting to 1 day (today).")
+        return 1
+    elif days > MAX_DAYS_TO_SCRAPE:
+        logger.warning(f"DAYS value {days} exceeds maximum allowed ({MAX_DAYS_TO_SCRAPE}). Setting to {MAX_DAYS_TO_SCRAPE} days.")
+        return MAX_DAYS_TO_SCRAPE
+    return days
+
+def validate_date(date_str: str) -> datetime.date:
+    """
+    Validates the date string and checks if it's within the allowed range.
+
+    :param date_str: The date string in YYYYMMDD format.
+    :type date_str: str
+    :returns: The validated datetime.date object.
+    :rtype: datetime.date
+    :raises argparse.ArgumentTypeError: If the date format is invalid or the date is out of range.
+    """
+    try:
+        parsed_date = datetime.strptime(date_str, '%Y%m%d').date()
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"Invalid DATE format: '{date_str}'. Expected YYYYMMDD (e.g., 20250523).")
+
+    today = datetime.now().date()
+    earliest_allowed_date = today - timedelta(days=1)
+    latest_allowed_date = today + timedelta(days=MAX_DAYS_TO_SCRAPE - 1)
+
+    if parsed_date < earliest_allowed_date:
+        raise argparse.ArgumentTypeError(f"The specified date '{date_str}' is too far in the past. Only dates from '{earliest_allowed_date.strftime('%Y%m%d')}' (yesterday) are allowed.")
+    if parsed_date > latest_allowed_date:
+        raise argparse.ArgumentTypeError(f"The specified date '{date_str}' is too far in the future. Only dates up to '{latest_allowed_date.strftime('%Y%m%d')}' are allowed (maximum {MAX_DAYS_TO_SCRAPE} days from today).")
+    
+    return parsed_date
+
+
 if __name__ == '__main__':
     DEFAULT_OUTPUT_FILE: str = 'tvspielfilm'
 
@@ -2323,12 +2349,13 @@ Examples:
 
     parser.add_argument(
         '--date',
-        type=str,
+        type=validate_date,
+        dest='start_date_obj',
         help='Specific date to scrape in YYYYMMDD format (e.g., 20250523). If specified, only this date will be scraped and --days will be ignored.'
     )
     parser.add_argument(
         '--days',
-        type=int,
+        type=validate_days,
         default=DEFAULT_DAYS,
         help=f'Number of days to scrape (1-{MAX_DAYS_TO_SCRAPE}). Default: {DEFAULT_DAYS} (means today only). Ignored if --date is specified.'
     )
@@ -2520,7 +2547,7 @@ Examples:
         days=args.days,
         image_size=args.img_size,
         check_image=args.check_image,
-        start_date_str=args.date,
+        start_date_obj=args.start_date_obj,
         cache_dir_path=args.cache_dir,
         max_workers=args.max_workers,
         max_retries=args.max_retries,
