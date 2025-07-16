@@ -1231,6 +1231,27 @@ class TvsLeanScraper:
             if os.path.exists(temp_filepath):
                 os.remove(temp_filepath)
 
+    def _is_cache_fresh(self, cached_at_str: Optional[str]) -> bool:
+        """
+        Checks if a cache entry is still fresh based on its timestamp and the configured TTL.
+
+        :param cached_at_str: The ISO formatted UTC timestamp string when the cache was created.
+        :type cached_at_str: Optional[str]
+        :returns: True if the cache is fresh, False otherwise.
+        :rtype: bool
+        """
+        if not cached_at_str:
+            return False
+        try:
+            cached_at: datetime = datetime.fromisoformat(cached_at_str)
+            if cached_at.tzinfo is None:
+                cached_at = cached_at.replace(tzinfo=timezone.utc)
+            current_time_utc: datetime = datetime.now(timezone.utc)
+            return (current_time_utc - cached_at).total_seconds() < self.cache_ttl
+        except ValueError as e:
+            logger.warning(f"Invalid timestamp in cache: {cached_at_str}. Error: {e}. Treating cache as stale.")
+            return False
+
     def _get_channel_list(self) -> List[Dict[str, str]]:
         """
         Fetches and parses the list of channels from TVSpielfilm.de.
@@ -1265,14 +1286,7 @@ class TvsLeanScraper:
                 if cached_content_length is None:
                     cached_content_length = 0
 
-                if cached_at_str:
-                    try:
-                        cached_at: datetime = datetime.fromisoformat(cached_at_str)
-                        current_time: datetime = datetime.now(timezone.utc) if cached_at.tzinfo else datetime.now()
-                        if (current_time - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
-                            is_cache_fresh = True
-                    except ValueError as e:
-                        logger.warning(f"Invalid timestamp in channel list cache: {cached_at_str}. Error: {e}. Treating cache as stale.")
+                is_cache_fresh = self._is_cache_fresh(cached_at_str)
 
                 if is_cache_fresh and cached_channels_list is not None:
                     channels = cached_channels_list
@@ -1396,15 +1410,7 @@ class TvsLeanScraper:
             content_length = 0
         cached_xmltv_timezone: Optional[str] = cached_content.get('xmltv_timezone')
 
-        is_fresh: bool = False
-        if cached_at_str:
-            try:
-                cached_at: datetime = datetime.fromisoformat(cached_at_str)
-                current_time: datetime = datetime.now(timezone.utc)
-                if (current_time - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
-                    is_fresh = True
-            except ValueError as e:
-                logger.warning(f"Invalid timestamp in daily cache for {channel_id} on {date.strftime('%Y-%m-%d')}: {cached_at_str}. Error: {e}. Treating cache as stale.")
+        is_fresh: bool = self._is_cache_fresh(cached_at_str)
 
         if is_fresh:
             logger.debug(f"Loaded schedule for {channel_id} on {date.strftime('%Y-%m-%d')} from daily cache (fresh).")
@@ -1549,24 +1555,12 @@ class TvsLeanScraper:
                   detail_data is the updated dictionary containing detailed program information and image check results.
         :rtype: Tuple[Dict[str, Any], Optional[str], Optional[str], Optional[int]]
         """
-        current_time_utc = datetime.now(timezone.utc)
-
         cached_detail_etag = program_item_data.get('detail_etag')
         cached_detail_last_modified = program_item_data.get('detail_last_modified')
         cached_detail_content_length = program_item_data.get('detail_content_length')
         detail_cached_at_str = program_item_data.get('detail_cached_at')
 
-        is_detail_cache_fresh = False
-        if detail_cached_at_str:
-            try:
-                cached_at_dt = datetime.fromisoformat(detail_cached_at_str)
-                if cached_at_dt.tzinfo is None:
-                    cached_at_dt = cached_at_dt.replace(tzinfo=timezone.utc)
-                if (current_time_utc - cached_at_dt).total_seconds() < self.cache_ttl:
-                    is_detail_cache_fresh = True
-            except ValueError as e:
-                logger.warning(f"Invalid timestamp in detail cache for {item_id_for_log}: {detail_cached_at_str}. Error: {e}. Treating cache as stale.")
-
+        is_detail_cache_fresh = self._is_cache_fresh(detail_cached_at_str)
 
         detail_data = program_item_data.copy()
         new_detail_etag = cached_detail_etag
@@ -1593,7 +1587,7 @@ class TvsLeanScraper:
 
             if detail_response_content is not None:
                 detail_data = self.html_parser.parse_program_details(detail_response_content, program_item_data)
-                detail_data['detail_cached_at'] = current_time_utc.isoformat()
+                detail_data['detail_cached_at'] = datetime.now(timezone.utc).isoformat()
                 detail_data['detail_etag'] = temp_new_detail_etag
                 detail_data['detail_last_modified'] = temp_new_detail_last_modified
                 detail_data['detail_content_length'] = temp_new_detail_content_length
@@ -1655,7 +1649,6 @@ class TvsLeanScraper:
         is_cache_fresh: bool = False
         should_save_cache: bool = False
 
-        current_time_utc = datetime.now(timezone.utc)
 
         if self.enable_cache and not self.cache_clear_requested:
             filepath = self._get_daily_cache_filepath(channel_source_id, current_date)
@@ -1675,13 +1668,7 @@ class TvsLeanScraper:
                 new_last_modified = cached_last_modified
                 fetched_content_length = cached_content_length
 
-                if original_cached_at_str:
-                    try:
-                        cached_at: datetime = datetime.fromisoformat(original_cached_at_str)
-                        if (current_time_utc - cached_at.replace(tzinfo=timezone.utc)).total_seconds() < self.cache_ttl:
-                            is_cache_fresh = True
-                    except ValueError as e:
-                        logger.warning(f"Invalid timestamp in daily cache for {channel_source_id} on {current_date.strftime('%Y-%m-%d')}: {original_cached_at_str}. Error: {e}. Treating cache as stale.")
+                is_cache_fresh = self._is_cache_fresh(original_cached_at_str)
 
                 if is_cache_fresh and cached_data is not None:
                     if cached_xmltv_timezone == self.xmltv_timezone:
@@ -1746,20 +1733,8 @@ class TvsLeanScraper:
                         items_for_day = cached_data.copy()
                         for item_data in items_for_day:
                             detail_cached_at_str = item_data.get('detail_cached_at')
-                            if detail_cached_at_str:
-                                try:
-                                    cached_at_dt = datetime.fromisoformat(detail_cached_at_str)
-                                    if cached_at_dt.tzinfo is None:
-                                        cached_at_dt = cached_at_dt.replace(tzinfo=timezone.utc)
-                                    if (current_time_utc - cached_at_dt).total_seconds() >= self.cache_ttl:
-                                        logger.debug(f"Detail cache for '{item_data.get('title', 'N/A')}' is stale. Forcing re-fetch.")
-                                        item_data['detail_cached_at'] = None
-                                        should_save_cache = True
-                                except ValueError:
-                                    logger.warning(f"Invalid detail cached_at timestamp for item {item_data.get('title', 'N/A')}. Forcing re-fetch.")
-                                    item_data['detail_cached_at'] = None
-                                    should_save_cache = True
-                            else:
+                            if not self._is_cache_fresh(detail_cached_at_str):
+                                logger.debug(f"Detail cache for '{item_data.get('title', 'N/A')}' is stale. Forcing re-fetch.")
                                 item_data['detail_cached_at'] = None
                                 should_save_cache = True
                         break
@@ -1797,18 +1772,8 @@ class TvsLeanScraper:
                 if item_data.get('link'):
                     if not self.enable_cache or self.cache_clear_requested:
                         needs_detail_fetch = True
-                    elif item_data.get('detail_cached_at') is None:
+                    elif not self._is_cache_fresh(item_data.get('detail_cached_at')):
                         needs_detail_fetch = True
-                    else:
-                        try:
-                            cached_at_dt = datetime.fromisoformat(item_data['detail_cached_at'])
-                            if cached_at_dt.tzinfo is None:
-                                cached_at_dt = cached_at_dt.replace(tzinfo=timezone.utc)
-                            if (current_time_utc - cached_at_dt).total_seconds() >= self.cache_ttl:
-                                needs_detail_fetch = True
-                        except ValueError as e:
-                            logger.warning(f"Invalid detail cached_at timestamp for item {item_data.get('title', 'N/A')}: {item_data['detail_cached_at']}. Error: {e}. Forcing detail fetch.")
-                            needs_detail_fetch = True
 
                 needs_image_check_standalone = False
                 if self.check_image and item_data.get('image_url') and not needs_detail_fetch:
