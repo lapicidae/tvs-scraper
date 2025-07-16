@@ -12,13 +12,13 @@ This Python-based scraper is designed to extract EPG (Electronic Program Guide) 
 
 * **Parallel Processing:** Uses a thread pool to concurrently fetch schedules for channels and days, significantly reducing overall scraping time.
 
-* **Robust Retry Mechanism:** Implements retries for network errors (HTTP 429, 5xx, connection issues) as well as for application-level errors that may occur during schedule parsing.
+* **Robust Retry Mechanism:** Implements retries for network errors (HTTP 429, 5xx, connection errors) as well as for application-level errors that may occur during schedule parsing.
 
 * **Output Formats:** Generates EPG data in the standardized XMLTV format (`.xml`) or as a JSON array (`.json`).
 
 * **Image Validation:** Optional checking of image URLs to ensure that program images are actually available.
 
-* **Comprehensive Data Extraction:** Extracts detailed program information such as short description, long description, genre, original title, country, year, duration, FSK (parental rating), cast, director, screenplay, camera, numerical and textual ratings, and IMDb ratings.
+* **Comprehensive Data Extraction:** Extracts detailed program information such as short description, long description, genre, original title, country, year, duration, FSK (parental rating), cast, director, screenplay, camera, numerical and textual ratings, IMDb ratings, subtitles, and season/episode numbers.
 
 * **XML Security Filter:** Cleanses all text content of invalid XML characters before XMLTV output to ensure compatibility.
 
@@ -56,16 +56,16 @@ It is recommended to place the script in a directory included in your `PATH` (e.
 The scraper offers a custom caching system to minimize the number of live requests to the server and accelerate execution time on repeated runs. Caching of processed JSON data is **enabled by default**.
 
 **First Run:**
-During the **first run** of the scraper, especially when scraping many channels and days, execution can take a **very long time**. This is because the cache is initially empty, and all data must be fetched live from the internet. The default cache Time To Live (`--cache-ttl`) is 6 hours, and the cache is stored by default in the system's temporary directory in a subdirectory named `tvs-cache` (`--cache-dir`).
+During the **first run** of the scraper, especially when scraping many channels and days, execution can take a **very long time**. This is because the cache is initially empty, and all data must be fetched live from the internet. The default cache Time To Live (`--cache-ttl`) is 24 hours, and the cache is stored by default in the system's temporary directory in a subdirectory named `tvs-cache` (`--cache-dir`).
 
 **Subsequent Runs:**
-**After the first run**, subsequent scraper runs will generally be **significantly faster**. The scraper stores fetched HTML responses and processed JSON data on disk. For repeated requests to the same URLs or data, information will be loaded from the cache instead of being downloaded or re-processed, which significantly reduces the time.
+**After** the **first run**, subsequent scraper runs will generally be **significantly faster**. The scraper stores fetched HTML responses and processed JSON data on disk. For repeated requests to the same URLs or data, information will be loaded from the cache instead of being downloaded or re-processed, which significantly reduces the time.
 
 **Cache Consistency Check:**
 By default, the scraper uses a robust cache consistency check based on `Content-Length` (as a fallback when a 304 status is not received) and ETag/Last-Modified headers. This ensures that cached data is only used if the remote content hasn't significantly changed.
 
 **Proactive Cache Cleanup:**
-The scraper performs proactive cache cleanup to automatically remove stale or no longer relevant cache files (e.g., for past days or data too far in the future). This helps manage cache size and optimize performance. By default, cache files for past days are deleted; this behavior can be disabled with `--cache-keep`.
+The scraper performs proactive cache cleanup to automatically remove stale or no longer relevant cache files. This includes removing empty channel subdirectories, cache files for channels no longer targeted, and daily cache files outside the relevant time period. By default, cache files for past days are deleted; this behavior can be disabled with `--cache-keep`.
 
 **Potential Slowdowns due to Cache:**
 In certain scenarios, using the cache can, however, lead to **considerable slowdowns**. This can happen if:
@@ -94,7 +94,7 @@ The scraper is controlled via the command line with various arguments.
 
 * `--channel-ids-file <FILE>`: Path to a file containing a comma-separated list of channel IDs. If provided, this option takes precedence over `--channel-ids`.
 
-* `--date <DATE>`: Specific start date for scraping in `YYYYMMDD` format (e.g., `20250523`). If provided, only this date is scraped, and `--days` is ignored.
+* `--date <DATE>`: Specific start date for scraping in `YYYYMMDD` format (e.g., `20250523`). If provided, only this date is scraped, and `--days` is ignored. Only dates from 'yesterday' up to 'today + 12 days' are allowed.
 
 * `--days <NUMBER>`: Number of days to scrape (1-13). Default: `0` (means today only). This argument is ignored if `--date` is provided.
 
@@ -107,8 +107,6 @@ The scraper is controlled via the command line with various arguments.
 * `--img-size <SIZE>`: Image size to extract (`"150"`, `"300"` or `"600"`). Default: `600`.
 
 * `--img-check`: If set, performs an additional HEAD request to check if image URLs are valid. Increases scraping time.
-
-* `--img-crop-disable`: If set, disables the default 16:9 image cropping for images without existing crop instructions.
 
 * `--log-level <LEVEL>`: Sets the logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default: `WARNING`.
 
@@ -124,17 +122,19 @@ The scraper is controlled via the command line with various arguments.
 
 * `--cache-disable`: Disables caching of processed JSON data to disk. Default: `False` (cache is enabled).
 
-* `--cache-ttl <SECONDS>`: Cache Time To Live in seconds. This defines how long a processed JSON file is considered "fresh" and used directly without re-scraping HTML. Default: `6` hours (`21600` seconds).
+* `--cache-ttl <SECONDS>`: Cache Time To Live in seconds. This defines how long a processed JSON file is considered "fresh" and used directly without re-scraping HTML. Default: `24` hours (`86400` seconds).
 
 * `--cache-validation-tolerance <BYTES>`: Tolerance in bytes for content-length comparison when ETag/Last-Modified fails to return 304. Default: `5` bytes.
 
 * `--cache-keep`: If set, cache files for past days will NOT be automatically deleted. By default, past days' cache files are deleted.
 
-* `--max-workers <NUMBER>`: Maximum number of concurrent workers for data fetching. Default: `[Number of CPU cores] * 5` (e.g., 40 for 8 cores).
+* `--max-workers <NUMBER>`: Maximum number of concurrent workers for data fetching. Default: `10`.
 
 * `--max-retries <NUMBER>`: Maximum number of retry attempts for failed HTTP requests (e.g., 429, 5xx, connection errors). Default: `5`.
 
 * `--min-request-delay <SECONDS>`: Minimum delay in seconds between HTTP requests (only for live fetches). Default: `0.05`s.
+
+* `--max-concurrent-requests <NUMBER>`: Maximum number of concurrent HTTP requests allowed. This acts as a global rate limiter. Default: `15`.
 
 * `--max-schedule-retries <NUMBER>`: Maximum number of retry attempts for application-level errors during schedule parsing/generation. Default: `3`.
 
@@ -170,34 +170,36 @@ By default, the `run-scraper` script logs its output to syslog. To disable this,
 
 (Note that `--use-syslog` and `--syslog-ident` are for the Python scraper itself, while `--disable-syslog` and `--syslog-ident` are for the `run-scraper` script, with the bash script logging to syslog by default.)
 
-## Server Load and Fair Use (max-workers)
+## Server Load and Fair Use
 
-The `max-workers` setting directly influences the server load on the `m.tvspielfilm.de` website. Responsible usage is crucial to avoid impairing website availability and to prevent being interpreted as abusive activity (e.g., a denial-of-service-attack).
+The scraper offers several parameters to control the load on the `m.tvspielfilm.de` website. Responsible usage is crucial to avoid impairing website availability and to prevent being interpreted as abusive activity (e.g., a denial-of-service-attack).
 
-* **`max-workers`:** This parameter controls the number of concurrent requests your scraper sends to the server.
-    * **Low values (e.g., 1-5):** Very gentle on the server, but the scraping process takes longer.
-    * **High values (e.g., 10+):** Accelerates the scraping process but can heavily burden the server, especially if it is not designed for many concurrent requests.
+* **`--max-workers`:** This parameter controls the number of concurrent worker threads that process data (e.g., parsing HTML, extracting details). While it influences the overall speed, its direct impact on *concurrent HTTP requests* is managed by other parameters.
+    * **Low values (e.g., 1-5):** Very gentle on the server in terms of processing, but the overall scraping process takes longer.
+    * **High values (e.g., 10+):** Accelerates the data processing, but the actual network requests are still subject to the global rate limits.
 
-* **`--min-request-delay`:** This parameter (default: `0.05` seconds) is often more important than `max-workers` alone. It defines a minimum delay between individual HTTP requests. A delay of 0.5 to 1.0 seconds or more is crucial to avoid overwhelming the server.
+* **`--min-request-delay`:** This parameter (default: `0.05` seconds) defines a minimum delay between individual HTTP requests. It is crucial for polite scraping, ensuring that your scraper does not overwhelm the server with rapid-fire requests. A delay of 0.5 to 1.0 seconds or more is often recommended for public websites.
+
+* **`--max-concurrent-requests`:** This parameter (default: `15`) acts as a **global rate limiter** for the total number of HTTP requests that can be active at any given moment. Regardless of the `--max-workers` setting, this parameter ensures that the total number of simultaneous network connections to `m.tvspielfilm.de` does not exceed the specified limit. It's a critical safeguard to prevent overloading the server.
 
 **Recommendation for Fair Scraping:**
 
-1.  **Start conservatively:** Always begin with a low number of workers (e.g., 5) and an appropriate `min-request-delay` (e.g., 0.5 seconds).
-2.  **Observe server behavior:** Pay attention to error messages like `HTTP Error 429 (Too Many Requests)` or unusually slow response times. These are indicators of overload.
+1.  **Start conservatively:** Begin with a moderate `--max-workers` (e.g., 5-10), a noticeable `--min-request-delay` (e.g., 0.5 seconds), and the default `--max-concurrent-requests` (15).
+2.  **Observe server behavior:** Pay attention to log messages for `HTTP Error 429 (Too Many Requests)` or unusually long response times. These are indicators of server overload.
 3.  **Adjust parameters:**
-    * If you receive errors like 429, increase the `min-request-delay` or reduce `max-workers`.
-    * If the scraper runs stably and no issues occur, you can gradually increase `max-workers` or slightly decrease `min-request-delay`, but always with caution.
-4.  **Observe `robots.txt`:** Although `m.tvspielfilm.de/robots.txt` does not contain a specific `Crawl-delay`-directive, it specifies disallowed paths and explicitly excludes certain bots. Adhere to these rules.
+    * If you receive 429 errors, first increase the `--min-request-delay` or decrease `--max-concurrent-requests`.
+    * If the scraper runs stably and no issues occur, you can gradually increase `--max-workers` or slightly decrease `--min-request-delay`, but always with caution. Adjust `--max-concurrent-requests` only if you understand the server's capacity and need higher concurrency.
+4.  **Observe `robots.txt`:** Although `m.tvspielfilm.de/robots.txt` does not contain a specific `Crawl-delay` directive, it specifies disallowed paths and explicitly excludes certain bots. Adhere to these rules.
 5.  **Utilize caching:** Enabled caching significantly reduces the number of live requests, minimizing server load.
 
-For `m.tvspielfilm.de`, a larger media site, a value of **5 to 10 `max-workers` in combination with a `--min-request-delay` of at least 0.5 seconds** is a fair and appropriate starting point. The default value for `max-workers` is dynamic based on the CPU count and may be higher than 10, but the general recommendation remains valid.
+For `m.tvspielfilm.de`, a larger media site, a combination of a moderate `--max-workers` (e.g., 10), a `--min-request-delay` of at least 0.5 seconds, and the default `--max-concurrent-requests` (15) is a fair and appropriate starting point.
 
 ## Integration with `epgd` (or similar systems)
 
 The scraper is designed to work with the `epgd` daemon, which typically uses a `channelmap.conf` and an `epgd.conf`. **Note that for integration with `epgd`, the [xmltv-plugin](https://github.com/Zabrimus/epgd-plugin-xmltv) must be installed and activated on your system.**
 
 **Important Note on XMLTV Plugin and XSLT:**
-The default `xmltv.xsl` (provided by [xmltv-Plugin](https://github.com/Zabrimus/epgd-plugin-xmltv/tree/master/configs)) may not be designed to correctly process all fields extracted by this scraper (e.g., subtitles, detailed cast/crew, special ratings like IMDb or TVSpielfilm's "Tipp", image URLs).
+The default `xmltv.xsl` (provided by [xmltv-plugin](https://github.com/Zabrimus/epgd-plugin-xmltv/tree/master/configs)) may not be designed to correctly process all fields extracted by this scraper (e.g., subtitles, detailed cast/crew, special ratings like IMDb or TVSpielfilm's "Tipp", image URLs).
 It might be necessary to use a **[modified xmltv.xsl file](contrib/vdr-epg-daemon/configs/xmltv.xsl)** or customize your own to fully visualize and present this additional information. Customizing the XSLT is also required to properly handle the different image sizes (`size="1"`, `size="2"`, `size="3"`) provided by the scraper.
 
 ### `channelmap.conf`
@@ -269,18 +271,20 @@ The scraper is written in Python and uses `requests` for HTTP requests and `lxml
 
 * **`TvsLeanScraper` Class:** Encapsulates all scraping logic.
 
-* **`fetch_url` Method:** Responsible for fetching URLs and HTTP-level error handling. It uses `functools.lru_cache` for in-memory caching of HTTP responses and implements a custom file-based caching mechanism with content consistency checks, including `Content-Length` (as a fallback when a 304 status is not received), as well as ETag/Last-Modified.
+* **`fetch_url` Method:** Responsible for fetching URLs and HTTP-level error handling. It uses `functools.lru_cache` for in-memory caching of HTTP responses and implements a custom file-based caching mechanism with content consistency checks, including `Content-Length` (as a fallback when a 304 status is not received), as well as ETag/Last-Modified. It explicitly forces UTF-8 decoding of the response text.
 
-* **`_get_channel_list` Methode:** Extrahiert die Liste der Kanäle und integriert sich mit dem dateibasierten Cache für Kanallistendaten.
+* **`_get_channel_list` Method:** Extracts the list of channels and integrates with the file-based cache for channel list data.
 
-* **`_get_schedule_for_channel_and_date` Methode:** Extrahiert Programminformationen für einen bestimmten Kanal und Tag und integriert sich mit dem dateibasierten Cache für tägliche Sendeplandaten.
+* **`_get_daily_cache_filepath` Method:** Constructs the file path for the daily schedule JSON cache.
 
-* **`parse_program_details` Methode:** Extrahiert zusätzliche Details von den Programm-Detailseiten. Die HTML-Inhalte für Detailseiten profitieren vom In-Memory-Caching der HTTP-Antworten.
+* **`_load_daily_json_cache` Method:** Loads processed JSON data from the daily data cache, along with ETag, Last-Modified, Content-Length, and the timezone it was cached with. Checks if the data is fresh based on its internal timestamp and TTL. Also deletes cache files for past days (if `--keep-past-cache` is not set) and for dates beyond `MAX_DAYS_TO_SCRAPE` from the current date.
 
-* **`_process_channel_day_schedule` Methode:** Eine Hilfsmethode, die den Abruf und das Parsen für einen Tag und Kanal orchestriert, einschließlich der anwendungsspezifischen Retry-Logik und der Interaktion mit dem dateibasierten Cache.
+* **`_save_daily_json_cache` Method:** Saves processed JSON data to the daily data cache, including HTTP ETag, Last-Modified, Content-Length headers, and the timezone used for XMLTV time formatting.
 
-* **`_proactive_cache_cleanup` Methode:** Eine Methode zur proaktiven Bereinigung veralteter oder nicht mehr relevanter Cache-Dateien für alle Kanäle und Daten, einschließlich des Entfernens leerer Kanal-Unterverzeichnisse.
+* **`_process_channel_day_schedule` Method:** A helper method that orchestrates fetching and parsing for a day and channel, including application-specific retry logic and interaction with the file-based cache. It prioritizes fresh data from the local JSON cache. If stale or missing, it performs a conditional HTTP GET to check for updates. If the cached data's timezone differs from the requested one, timestamps are reprocessed.
 
-* **`generate_xmltv` Funktion:** Erstellt die XMLTV-Ausgabedatei.
+* **`_proactive_cache_cleanup` Method:** This method for proactive cleanup of old or irrelevant cache files for all channels and data, including removing empty channel subdirectories, cache files for channels no longer targeted, and daily cache files outside the relevant time period.
 
-Bei Änderungen an der TVSpielfilm.de-Webseite müssen möglicherweise die CSS-Selektoren in der `TvsHtmlParser`-Klasse aktualisiert werden, um die korrekten Elemente zu finden.
+* **`generate_xmltv` Function:** Creates the XMLTV output file.
+
+Should changes occur on the TVSpielfilm.de website, the CSS selectors in the `TvsHtmlParser` class may need to be updated to find the correct elements.
