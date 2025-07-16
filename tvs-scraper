@@ -172,7 +172,7 @@ class TvsHtmlParser:
         self.re_image_url_match: re.Pattern = re.compile(r"url\(['\"]?(.*?)['\"]?\)")
         self.re_genre_pipe_match: re.Pattern = re.compile(r'\|\s*(.*)')
         self.re_duration_minutes_match: re.Pattern = re.compile(r'(\d+)\s*Min\.', re.IGNORECASE)
-        self.re_fsk_match: re.compile = re.compile(r'(\d+)')
+        self.re_fsk_match: re.Pattern = re.compile(r'(\d+)')
         self.re_rating_class_match: re.Pattern = re.compile(r'rating-(\d+)')
         self.re_adsc_sparte_match: re.Pattern = re.compile(r'"adsc_sparte":"([^"]+)"')
         self.re_season_episode_match: re.Pattern = re.compile(r'Staffel\s*(\d+),\s*Folge\s*(\d+)(?:/(\d+))?')
