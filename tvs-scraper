@@ -487,7 +487,7 @@ class TvsHtmlParser:
 
     def _extract_genre_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
-        Extracts genre information from the HTML root.
+        Extracts genre information from the HTML root using a data-driven approach.
 
         :param root: The lxml HTML root element.
         :type root: lxml.html.HtmlElement
@@ -496,14 +496,14 @@ class TvsHtmlParser:
         :param detail_sections: Pre-parsed dictionary of detail sections.
         :type detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]
         """
-        genre_underline_tag: List[lxml.html.HtmlElement] = self.selector_genre_underline_tag(root)
-        if genre_underline_tag and genre_underline_tag[0].text_content():
-            genre_text: str = genre_underline_tag[0].text_content().strip()
-            genre_match: Optional[re.Match[str]] = self.re_genre_pipe_match.search(genre_text)
-            if genre_match:
-                detail_data['genre'] = _sanitize_xml_string(genre_match.group(1).strip())
-            else:
-                detail_data['genre'] = _sanitize_xml_string(genre_text.strip())
+        genre_extraction_strategies = [
+            (self.selector_genre_underline_tag,
+             lambda elem: (match.group(1).strip() if (match := self.re_genre_pipe_match.search(elem.text_content().strip())) else elem.text_content().strip())),
+            (self.selector_genre_tag_general,
+             lambda elem: elem.text_content().strip()),
+            (self.selector_genre_time_tag_schedule,
+             lambda elem: (match.group(1).strip() if (match := self.re_genre_pipe_match.search(elem.text_content().strip())) else elem.text_content().strip()))
+        ]
 
         infos_dl = detail_sections.get('Infos')
         if infos_dl is not None:
@@ -512,20 +512,18 @@ class TvsHtmlParser:
                     genre_dd: Optional[lxml.html.HtmlElement] = dt_element.getnext()
                     if genre_dd and genre_dd.text_content():
                         detail_data['genre'] = _sanitize_xml_string(genre_dd.text_content().strip())
-                        break
+                        return
 
-        if not detail_data.get('genre'):
-            genre_tag_general: List[lxml.html.HtmlElement] = self.selector_genre_tag_general(root)
-            if genre_tag_general and genre_tag_general[0].text_content():
-                detail_data['genre'] = _sanitize_xml_string(genre_tag_general[0].text_content().strip())
-            else:
-                genre_time_tag_schedule: List[lxml.html.HtmlElement] = self.selector_genre_time_tag_schedule(root)
-                if genre_time_tag_schedule and genre_time_tag_schedule[0].text_content():
-                    genre_match = self.re_genre_pipe_match.search(genre_time_tag_schedule[0].text_content().strip())
-                    if genre_match:
-                        detail_data['genre'] = _sanitize_xml_string(genre_match.group(1).strip())
-                    else:
-                        detail_data['genre'] = _sanitize_xml_string(genre_time_tag_schedule[0].text_content().strip())
+        for selector, processor in genre_extraction_strategies:
+            if detail_data.get('genre'):
+                break
+            
+            elements: List[lxml.html.HtmlElement] = selector(root)
+            if elements and elements[0].text_content():
+                extracted_genre = processor(elements[0])
+                if extracted_genre:
+                    detail_data['genre'] = _sanitize_xml_string(extracted_genre)
+                    break
 
     def _extract_general_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
