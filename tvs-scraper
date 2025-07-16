@@ -1096,6 +1096,8 @@ class TvsLeanScraper:
             if response is None:
                 return None, None, None, None
 
+            response.encoding = 'utf-8' # Force UTF-8 decoding for the response text
+
             new_etag: Optional[str] = response.headers.get('ETag')
             new_last_modified: Optional[str] = response.headers.get('Last-Modified')
             fetched_content_length: int = len(response.content)
@@ -1108,6 +1110,8 @@ class TvsLeanScraper:
 
         if response is None:
             return None, None, None, None
+
+        response.encoding = 'utf-8' # Force UTF-8 decoding for the response text
 
         new_etag: Optional[str] = response.headers.get('ETag')
         new_last_modified: Optional[str] = response.headers.get('Last-Modified')
