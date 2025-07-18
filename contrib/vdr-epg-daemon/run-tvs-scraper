@@ -2,7 +2,7 @@
 
 set -euo pipefail
 
-## config
+## config variables
 # tvsScraperPath='/usr/bin/tvs-scraper'		# Path to the tvs-scraper executable
 # cacheDir='/epgd/cache/tvs-xmltv'			# Cache directory used by the tvs-scraper
 
@@ -17,6 +17,19 @@ set -euo pipefail
 # syslogIdent='tvs-scraper'					# Syslog identifier
 
 # alwaysUpdate=true							# Skip all checks and overwrite the output file
+
+
+## config file
+# External file to define the above config variables (use either the file or the variables, not both)
+
+# runTVSconfigFile='/epgd/config/run-tvs-scraper.conf'
+runTVSconfigFile="${runTVSconfigFile:-"/etc/run-tvs-scraper.conf"}"
+
+if [ -r "$runTVSconfigFile" ]; then
+	log_message "Read configuration from: %s" "$runTVSconfigFile"
+	# shellcheck source=/dev/null
+	source "$runTVSconfigFile"
+fi
 
 
 ## defaults (do not change)
