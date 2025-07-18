@@ -49,7 +49,6 @@ MAX_DAYS_TO_SCRAPE: int = 13
 DEFAULT_CACHE_SUBDIRECTORY: str = "tvs-cache"
 DEFAULT_CACHE_DISABLE: bool = False
 DEFAULT_CACHE_TTL_SECONDS: int = 24 * 60 * 60 # 24 hours
-CACHE_PROCESSED_DATA_SUBDIRECTORY: str = "processed-data"
 CACHE_CHANNEL_LIST_FILE: str = "channels.json"
 
 DEFAULT_MAX_WORKERS: int = 10
@@ -918,7 +917,7 @@ class TvsLeanScraper:
 
         self.enable_cache: bool = not disable_cache
         self.cache_ttl: int = cache_ttl
-        self.processed_data_cache_base_dir: str = os.path.join(self.cache_dir, CACHE_PROCESSED_DATA_SUBDIRECTORY)
+        self.processed_data_cache_base_dir: str = self.cache_dir
         self.keep_past_cache: bool = bool(keep_past_cache)
         self.cache_clear_requested: bool = cache_clear
         self.cache_validation_tolerance: int = cache_validation_tolerance
