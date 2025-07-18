@@ -18,18 +18,7 @@ set -euo pipefail
 
 # alwaysUpdate=true							# Skip all checks and overwrite the output file
 
-
-## config file
-# External file to define the above config variables (use either the file or the variables, not both)
-
-# runTVSconfigFile='/epgd/config/run-tvs-scraper.conf'
-runTVSconfigFile="${runTVSconfigFile:-"/etc/run-tvs-scraper.conf"}"
-
-if [ -r "$runTVSconfigFile" ]; then
-	log_message "Read configuration from: %s" "$runTVSconfigFile"
-	# shellcheck source=/dev/null
-	source "$runTVSconfigFile"
-fi
+# runTVSconfigFile='/epgd/config/run-tvs-scraper.conf'	# External file to define the above config variables (use either the file or the variables, not both)
 
 
 ## defaults (do not change)
@@ -72,6 +61,15 @@ log_message() {
 		printf '%s\n' "$formatted"
 	fi
 }
+
+# config file
+runTVSconfigFile="${runTVSconfigFile:-"/etc/run-tvs-scraper.conf"}"
+
+if [ -r "$runTVSconfigFile" ]; then
+	# shellcheck source=/dev/null
+	source "$runTVSconfigFile"
+	log_message "Configuration read from: %s" "$runTVSconfigFile"
+fi
 
 # Store arguments to pass to the Python script
 PYTHON_SCRIPT_ARGS=("$@")
