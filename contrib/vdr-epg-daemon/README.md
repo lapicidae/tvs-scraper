@@ -6,9 +6,9 @@ The scraper is designed to work with the [vdr-epg-daemon](https://github.com/hor
 The default `xmltv.xsl` (provided by [xmltv-plugin](https://github.com/Zabrimus/epgd-plugin-xmltv/tree/master/configs)) may not be designed to correctly process all fields extracted by this scraper (e.g., subtitles, detailed cast/crew, special ratings like IMDb or TVSpielfilm's "Tipp", image URLs).
 It might be necessary to use a **[modified xmltv.xsl file](configs/xmltv.xsl)** or customize your own to fully visualize and present this additional information. Customizing the XSLT is also required to properly handle the different image sizes (`size="1"`, `size="2"`, `size="3"`) provided by the scraper.
 
-### `run-scraper` Script
+### `run-tvs-scraper` Script
 
-The provided [run-scraper](run-scraper) script automates the invocation of the Python scraper based on the settings in `epgd.conf` and `channelmap.conf`. It checks if an update of the EPG data is necessary (e.g., if the output file does not exist, is too old, or the `channelmap.conf` is newer).
+The provided [run-tvs-scraper](run-tvs-scraper) script automates the invocation of the Python scraper based on the settings in `epgd.conf` and `channelmap.conf`. It checks if an update of the EPG data is necessary (e.g., if the output file does not exist, is too old, or the `channelmap.conf` is newer).
 
 ### `channelmap.conf`
 
@@ -21,7 +21,7 @@ xmltv:ard.tvs = S19.2E-1-1019-10301 // Das Erste HD
 xmltv:zdf.tvs = S19.2E-1-1011-11110 // ZDF HD
 ```
 
-* `xmltv`: The source name recognized by the `run-scraper` script.
+* `xmltv`: The source name recognized by the `run-tvs-scraper` script.
 
 * `ard.tvs`: The TVSpielfilm.de channel ID (`ARD`) with the `.tvs` extension. **ATTENTION: Lowercase letters must be used!**
 
@@ -32,7 +32,7 @@ The `epgd.conf` configures the `epgd` daemon itself, including the path to the s
 **Example entries in `epgd.conf`:**
 
 ```
-xmltv.getdata = /usr/local/bin/run-scraper
+xmltv.getdata = /usr/local/bin/run-tvs-scraper
 xmltv.input = /path/to/your/tvs_xmltv.xml
 DaysInAdvance = 7
 UpdateTime = 24

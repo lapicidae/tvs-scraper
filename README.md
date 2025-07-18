@@ -160,16 +160,6 @@ The scraper is controlled via the command line with various arguments.
 ./tvs-scraper --channel-ids "PRO7" --date 20250601 --cache-clear --output-format xmltv
 ```
 
-**Use scraper in conjunction with `run-scraper` and syslog:**
-
-By default, the `run-scraper` script logs its output to syslog. To disable this, use `--disable-syslog`.
-
-```bash
-/usr/local/bin/run-scraper --syslog-ident my-epg-script
-```
-
-(Note that `--use-syslog` and `--syslog-ident` are for the Python scraper itself, while `--disable-syslog` and `--syslog-ident` are for the `run-scraper` script, with the bash script logging to syslog by default.)
-
 ## Server Load and Fair Use
 
 The scraper offers several parameters to control the load on the `m.tvspielfilm.de` website. Responsible usage is crucial to avoid impairing website availability and to prevent being interpreted as abusive activity (e.g., a denial-of-service-attack).

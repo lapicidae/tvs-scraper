@@ -6,9 +6,9 @@ Der Scraper ist darauf ausgelegt, mit dem [vdr-epg-daemon](https://github.com/ho
 Die standardmäßige `xmltv.xsl` (bereitgestellt vom [xmltv-Plugin](https://github.com/Zabrimus/epgd-plugin-xmltv/tree/master/configs)) ist möglicherweise nicht darauf ausgelegt, alle vom Scraper extrahierten Felder (z.B. Untertitel, detaillierte Besetzung/Crew, spezielle Bewertungen wie IMDB oder TVSpielfilm-Tipp, Bild-URLs) korrekt zu verarbeiten.
 Es kann notwendig sein, eine [**modifizierte xmltv.xsl Datei**](configs/xmltv.xsl) zu verwenden oder eine eigene anzupassen, um diese zusätzlichen Informationen vollständig zu visualisieren und darzustellen. Eine Anpassung der XSLT ist auch erforderlich, um die verschiedenen Bildgrößen (`size="1"`, `size="2"`, `size="3"`) korrekt zu verarbeiten, die der Scraper bereitstellt.
 
-### `run-scraper` Skript
+### `run-tvs-scraper` Skript
 
-Das bereitgestellte [run-scraper](run-scraper)-Skript automatisiert den Aufruf des Python-Scrapers basierend auf den Einstellungen in `epgd.conf` und `channelmap.conf`. Es prüft, ob ein Update der EPG-Daten notwendig ist (z.B. wenn die Ausgabedatei nicht existiert, zu alt ist oder die `channelmap.conf` neuer ist).
+Das bereitgestellte [run-tvs-scraper](run-tvs-scraper)-Skript automatisiert den Aufruf des Python-Scrapers basierend auf den Einstellungen in `epgd.conf` und `channelmap.conf`. Es prüft, ob ein Update der EPG-Daten notwendig ist (z.B. wenn die Ausgabedatei nicht existiert, zu alt ist oder die `channelmap.conf` neuer ist).
 
 ### `channelmap.conf`
 
@@ -21,7 +21,7 @@ xmltv:ard.tvs = S19.2E-1-1019-10301 // Das Erste HD
 xmltv:zdf.tvs = S19.2E-1-1011-11110 // ZDF HD
 ```
 
-* `xmltv`: Der Quellenname, der vom `run-scraper`-Skript erkannt wird.
+* `xmltv`: Der Quellenname, der vom `run-tvs-scraper`-Skript erkannt wird.
 
 * `ard.tvs`: Die Kanal-ID von TVSpielfilm.de (`ARD`) mit der Endung `.tvs`. **ACHTUNG: Es müssen Kleinbuchstaben verwendet werden!**
 
@@ -32,7 +32,7 @@ Die `epgd.conf` konfiguriert den `epgd`-Daemon selbst, einschließlich des Pfads
 **Beispiel-Einträge in `epgd.conf`:**
 
 ```
-xmltv.getdata = /usr/local/bin/run-scraper
+xmltv.getdata = /usr/local/bin/run-tvs-scraper
 xmltv.input = /path/to/your/tvs_xmltv.xml
 DaysInAdvance = 7
 UpdateTime = 24
