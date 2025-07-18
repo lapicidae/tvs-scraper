@@ -16,7 +16,7 @@ set -euo pipefail
 # syslogEnable='true'						# The output is forwarded to syslog
 # syslogIdent='tvs-scraper'					# Syslog identifier
 
-alwaysUpdate=true							# Skip all checks and overwrite the output file
+# alwaysUpdate=true							# Skip all checks and overwrite the output file
 
 
 ## defaults (do not change)
