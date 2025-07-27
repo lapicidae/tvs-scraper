@@ -41,7 +41,7 @@ from zoneinfo import ZoneInfo
 
 logger = logging.getLogger(__name__)
 
-DEFAULT_DAYS: int = 0
+DEFAULT_DAYS: int = 1
 DEFAULT_IMAGE_SIZE: str = "600"
 DEFAULT_IMAGE_CHECK: bool = False
 MAX_DAYS_TO_SCRAPE: int = 13
@@ -2388,7 +2388,7 @@ Examples:
         '--days',
         type=validate_days,
         default=DEFAULT_DAYS,
-        help=f'Number of days to scrape (1-{MAX_DAYS_TO_SCRAPE}). Default: {DEFAULT_DAYS} (means today only). Ignored if --date is specified.'
+        help=f'Number of days to scrape (1-{MAX_DAYS_TO_SCRAPE}). Default: {DEFAULT_DAYS}. Ignored if --date is specified.'
     )
 
     parser.add_argument(
