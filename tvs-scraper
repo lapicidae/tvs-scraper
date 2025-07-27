@@ -1276,6 +1276,31 @@ class TvsLeanScraper:
             logger.warning(f"Invalid timestamp in cache: {cached_at_str}. Error: {e}. Treating cache as stale.")
             return False
 
+    def _get_cache_filepath(self, cache_type: str, channel_id: Optional[str] = None, date: Optional[datetime.date] = None) -> str:
+        """
+        Constructs the file path for various cache types.
+
+        :param cache_type: The type of cache ('channel_list', 'daily_schedule').
+        :type cache_type: str
+        :param channel_id: The ID of the channel (required for 'daily_schedule').
+        :type channel_id: Optional[str]
+        :param date: The date of the schedule (required for 'daily_schedule').
+        :type date: Optional[datetime.date]
+        :returns: The full path to the JSON file.
+        :rtype: str
+        :raises ValueError: If required parameters for a cache_type are missing.
+        """
+        if cache_type == 'channel_list':
+            return os.path.join(self.processed_data_cache_base_dir, CACHE_CHANNEL_LIST_FILE)
+        elif cache_type == 'daily_schedule':
+            if not channel_id or not date:
+                raise ValueError("channel_id and date are required for 'daily_schedule' cache type.")
+            channel_cache_dir = os.path.join(self.processed_data_cache_base_dir, channel_id.lower())
+            os.makedirs(channel_cache_dir, exist_ok=True)
+            return os.path.join(channel_cache_dir, date.strftime('%Y%m%d') + '.json')
+        else:
+            raise ValueError(f"Unknown cache type: {cache_type}")
+
     def _get_channel_list(self) -> List[Dict[str, str]]:
         """
         Fetches and parses the list of channels from TVSpielfilm.de.
@@ -1299,7 +1324,7 @@ class TvsLeanScraper:
         is_cache_fresh: bool = False
 
         if self.enable_cache and not self.cache_clear_requested:
-            filepath = self._get_cache_channel_list_filepath()
+            filepath = self._get_cache_filepath('channel_list')
             cached_data_from_file = self._load_json_with_lock(filepath)
 
             if cached_data_from_file:
@@ -1352,7 +1377,7 @@ class TvsLeanScraper:
                     'cached_at': datetime.now(timezone.utc).isoformat(),
                     'content_length': temp_fetched_content_length,
                 }
-                self._save_json_with_lock(self._get_cache_channel_list_filepath(), cache_content)
+                self._save_json_with_lock(self._get_cache_filepath('channel_list'), cache_content)
         elif cached_channels_list is not None:
             logger.debug("Channel list HTML content not modified (304) or semantically identical. Using stale cache.")
             channels = cached_channels_list
@@ -1360,30 +1385,6 @@ class TvsLeanScraper:
             logger.error(f"Failed to fetch channel list from {CHANNEL_LIST_URL} and no cache available.")
 
         return channels
-
-    def _get_cache_channel_list_filepath(self) -> str:
-        """
-        Constructs the file path for the channel list JSON cache.
-
-        :returns: The full path to the JSON file.
-        :rtype: str
-        """
-        return os.path.join(self.processed_data_cache_base_dir, CACHE_CHANNEL_LIST_FILE)
-
-    def _get_daily_cache_filepath(self, channel_id: str, date: datetime.date) -> str:
-        """
-        Constructs the file path for the daily schedule JSON cache.
-
-        :param channel_id: The ID of the channel.
-        :type channel_id: str
-        :param date: The date of the schedule.
-        :type date: datetime.date
-        :returns: The full path to the JSON file for the daily schedule.
-        :rtype: str
-        """
-        channel_cache_dir = os.path.join(self.processed_data_cache_base_dir, channel_id.lower())
-        os.makedirs(channel_cache_dir, exist_ok=True)
-        return os.path.join(channel_cache_dir, date.strftime('%Y%m%d') + '.json')
 
     def _load_daily_json_cache(self, channel_id: str, date: datetime.date) -> Tuple[Optional[List[Dict[str, Any]]], Optional[str], Optional[str], Optional[int], Optional[str], bool, Optional[str]]:
         """
@@ -1407,7 +1408,7 @@ class TvsLeanScraper:
             logger.debug(f"Stop event set. Aborting cache load for {channel_id} on {date.strftime('%Y-%m-%d')}.")
             return None, None, None, None, None, False, None
 
-        filepath: str = self._get_daily_cache_filepath(channel_id, date)
+        filepath: str = self._get_cache_filepath('daily_schedule', channel_id=channel_id, date=date)
 
         if not self.keep_past_cache and date < (datetime.now().date() - timedelta(days=1)):
             logger.debug(f"Deleting stale cache file for past day {date.strftime('%Y-%m-%d')} for channel {channel_id} as --keep-past-cache is not set.")
@@ -1474,7 +1475,7 @@ class TvsLeanScraper:
             logger.debug(f"Stop event set. Aborting cache save for {channel_id} on {date.strftime('%Y-%m-%d')}.")
             return
 
-        filepath: str = self._get_daily_cache_filepath(channel_id, date)
+        filepath: str = self._get_cache_filepath('daily_schedule', channel_id=channel_id, date=date)
         cache_content: Dict[str, Any] = {
             'data': data,
             'etag': etag,
@@ -1685,7 +1686,7 @@ class TvsLeanScraper:
 
 
         if self.enable_cache and not self.cache_clear_requested:
-            filepath = self._get_daily_cache_filepath(channel_source_id, current_date)
+            filepath = self._get_cache_filepath('daily_schedule', channel_id=channel_source_id, date=current_date)
             cached_data_from_file = self._load_json_with_lock(filepath)
 
             if cached_data_from_file:
