@@ -878,7 +878,7 @@ class TvsLeanScraper:
         :type http_timeout: int
         :param cache_blind_read: If True, cached data is used directly without re-validation if present.
         :type cache_blind_read: bool
-        :raises NotADirectoryError: If the specified cache path exists but is not a directory.
+        :raises SystemExit: If the specified cache path exists but is not a directory.
         """
         self.target_sourceids: Optional[set[str]] = None
         if channel_ids_file:
@@ -921,8 +921,8 @@ class TvsLeanScraper:
 
         if os.path.exists(self.cache_dir):
             if not os.path.isdir(self.cache_dir):
-                logger.error(f"Cache path '{self.cache_dir}' exists but is not a directory. Please resolve this conflict.")
-                raise NotADirectoryError(f"Cache path '{self.cache_dir}' exists but is not a directory.")
+                logger.critical(f"Critical Error: Cache path '{self.cache_dir}' exists but is not a directory. Please delete or specify a different path. Exiting.")
+                sys.exit(1)
         else:
             os.makedirs(self.cache_dir, exist_ok=True)
 
@@ -1382,7 +1382,8 @@ class TvsLeanScraper:
             logger.debug("Channel list HTML content not modified (304) or semantically identical. Using stale cache.")
             channels = cached_channels_list
         else:
-            logger.error(f"Failed to fetch channel list from {CHANNEL_LIST_URL} and no cache available.")
+            logger.critical(f"Critical Error: Failed to fetch channel list from {CHANNEL_LIST_URL} and no cache available. Cannot proceed without channel data. Exiting.")
+            sys.exit(1)
 
         return channels
 
@@ -1984,6 +1985,11 @@ class TvsLeanScraper:
         available_channels_full_list: List[Dict[str, str]] = self._get_channel_list()
         if self.stop_event.is_set():
             return []
+
+        if not available_channels_full_list:
+            logger.critical("Critical Error: No channels could be retrieved from TVSpielfilm.de. Exiting.")
+            sys.exit(1)
+
         available_channel_ids: set[str] = {channel['source_id'] for channel in available_channels_full_list}
 
         if self.target_sourceids:
@@ -1996,14 +2002,14 @@ class TvsLeanScraper:
                 if channel['source_id'] in self.target_sourceids
             ]
             if not channel_list_to_scrape:
-                logger.warning("No requested channels found on the website. Exiting.")
-                return []
+                logger.critical("Critical Error: No requested channels were found on TVSpielfilm.de. Exiting.")
+                sys.exit(1)
         else:
             channel_list_to_scrape = available_channels_full_list
 
         if not channel_list_to_scrape:
-            logger.warning("No channels found or specified. Exiting.")
-            return []
+            logger.critical("Critical Error: No channels found or specified after filtering. Exiting.")
+            sys.exit(1)
 
         total_channels: int = len(channel_list_to_scrape)
 
@@ -2694,8 +2700,10 @@ Examples:
             logger.info(f"Data successfully saved. Total {len(extracted_data)} items written.")
         except IOError as e:
             logger.error(f"Error writing JSON output file {output_filename}: {e}")
+            sys.exit(1)
         except Exception as e:
             logger.error(f"Unexpected error saving JSON data to {output_filename}: {e}")
+            sys.exit(1)
 
     elif args.output_format == 'xmltv':
         if output_filename == default_output_file_arg and not output_filename.endswith('.xml'):
@@ -2705,6 +2713,7 @@ Examples:
             generate_xmltv(extracted_data, output_filename, scraper.xmltv_timezone)
         except Exception as e:
             logger.error(f"Failed to generate XMLTV file: {e}")
+            sys.exit(1)
 
     else:
         logger.warning("No data extracted or invalid output format specified. Output file will not be created.")
