@@ -1586,6 +1586,10 @@ class TvsLeanScraper:
                   detail_data is the updated dictionary containing detailed program information and image check results.
         :rtype: Tuple[Dict[str, Any], Optional[str], Optional[str], Optional[int]]
         """
+        if self.stop_event.is_set():
+            logger.debug(f"Stop event set. Aborting detail and image fetch for {item_id_for_log}.")
+            return program_item_data, None, None, None
+
         cached_detail_etag = program_item_data.get('detail_etag')
         cached_detail_last_modified = program_item_data.get('detail_last_modified')
         cached_detail_content_length = program_item_data.get('detail_content_length')
