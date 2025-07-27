@@ -18,7 +18,7 @@ This Python-based scraper is designed to extract EPG (Electronic Program Guide) 
 
 * **Image Validation:** Optional checking of image URLs to ensure that program images are actually available.
 
-* **Comprehensive Data Extraction:** Extracts detailed program information such as short description, long description, genre, original title, country, year, duration, FSK (parental rating), cast, director, screenplay, camera, numerical and textual ratings, IMDb ratings, subtitles, and season/episode numbers.
+* **Comprehensive Data Extraction:** Extracts detailed program information such as short description, long description, genre, original title, country, year, duration, FSK (parental rating), cast, director, screenplay, camera, numerical and textual ratings, IMDb ratings, and season/episode numbers.
 
 * **XML Security Filter:** Cleanses all text content of invalid XML characters before XMLTV output to ensure compatibility.
 
@@ -96,7 +96,7 @@ The scraper is controlled via the command line with various arguments.
 
 * `--date <DATE>`: Specific start date for scraping in `YYYYMMDD` format (e.g., `20250523`). If provided, only this date is scraped, and `--days` is ignored. Only dates from 'yesterday' up to 'today + 12 days' are allowed.
 
-* `--days <NUMBER>`: Number of days to scrape (1-13). Default: `0` (means today only). This argument is ignored if `--date` is provided.
+* `--days <NUMBER>`: Number of days to scrape (1-14). Default: `1`. Ignored if `--date` is specified.
 
 * `--output-file <FILE>`: Path to the output file. The file extension (`.json` or `.xml`) will be automatically added if not present. Default: `tvspielfilm`.
 
@@ -127,6 +127,8 @@ The scraper is controlled via the command line with various arguments.
 * `--cache-validation-tolerance <BYTES>`: Tolerance in bytes for content-length comparison when ETag/Last-Modified fails to return 304. Default: `5` bytes.
 
 * `--cache-keep`: If set, cache files for past days will NOT be automatically deleted. By default, past days' cache files are deleted.
+
+* `--cache-blind-read`: If set, cached data will be used directly without re-validation if present. This bypasses freshness checks and conditional GET requests for cached content.
 
 * `--max-workers <NUMBER>`: Maximum number of concurrent workers for data fetching. Default: `10`.
 
@@ -202,15 +204,22 @@ Please read [this](contrib/vdr-epg-daemon/README.md) information.
 
 * **`HTTP Error 403 (Forbidden)` or `429 (Too Many Requests)`:** This indicates that the website is blocking your requests. The scraper has built-in retries and delays, but with aggressive use, this can still happen. Increase `--min-request-delay` or reduce `--max-workers`.
 
-* **Incorrect XMLTV output:** Ensure that `channelmap.conf` is correct and that channel IDs match those used by TVSpielfilm.de.
+* **Incorrect XMLTV output:** Ensure that channel IDs match those used by TVSpielfilm.de.
 
 * **Permission issues:** Ensure that the script and output directories have the correct read and write permissions.
 
 ## Development
 
-The scraper is written in Python and uses `requests` for HTTP requests and `lxml.html` with `cssselect` for HTML parsing.
+This section provides insights for developers interested in extending or modifying the scraper.
 
-* **`TvsLeanScraper` Class:** Encapsulates all scraping logic.
+### Code Structure
+The core logic is encapsulated within the `tvs-scraper` file. Key components include:
+
+* **`TvsLeanScraper` Class:** This is the main class that orchestrates the scraping process, handling HTTP requests, caching, and overall data flow.
+
+* **`TvsHtmlParser` Class:** Dedicated to parsing HTML content from TVSpielfilm.de, containing all necessary CSS selectors and regular expressions.
+
+The following methods and functions are also central to the scraper's operation:
 
 * **`fetch_url` Method:** Responsible for fetching URLs and HTTP-level error handling. It uses `functools.lru_cache` for in-memory caching of HTTP responses and implements a custom file-based caching mechanism with content consistency checks, including `Content-Length` (as a fallback when a 304 status is not received), as well as ETag/Last-Modified. It explicitly forces UTF-8 decoding of the response text.
 
@@ -229,3 +238,12 @@ The scraper is written in Python and uses `requests` for HTTP requests and `lxml
 * **`generate_xmltv` Function:** Creates the XMLTV output file.
 
 Should changes occur on the TVSpielfilm.de website, the CSS selectors in the `TvsHtmlParser` class may need to be updated to find the correct elements.
+
+### Dependencies
+Ensure all dependencies listed in the [Dependencies](#dependencies) section are installed.
+
+### Logging
+The script uses Python's standard `logging` module. You can adjust log verbosity using command-line options (`--log-level` or `--verbose`).
+
+### Contribution
+Contributions are welcome! Please feel free to open issues for bug reports or feature requests, or submit pull requests with improvements.

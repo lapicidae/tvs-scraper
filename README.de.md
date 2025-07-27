@@ -96,7 +96,7 @@ Der Scraper wird über die Kommandozeile mit verschiedenen Argumenten gesteuert.
 
 * `--date <DATUM>`: Spezifisches Startdatum für das Scraping im Format `JJJJMMTT` (z.B. `20250523`). Wenn angegeben, wird nur dieser eine Tag gescrapt und `--days` ignoriert. Es sind nur Daten von 'gestern' bis 'heute + 12 Tage' erlaubt.
 
-* `--days <ANZAHL>`: Anzahl der Tage, die gescrapt werden sollen (1-13). Standard: `0` (bedeutet nur heute). Dieses Argument wird ignoriert, wenn `--date` angegeben ist.
+* `--days <ANZAHL>`: Anzahl der Tage, die gescrapt werden sollen (1-14). Standard: `1`. Dieses Argument wird ignoriert, wenn `--date` angegeben ist.
 
 * `--output-file <DATEI>`: Pfad zur Ausgabedatei. Die Dateierweiterung (`.json` oder `.xml`) wird automatisch hinzugefügt, falls nicht vorhanden. Standard: `tvspielfilm`.
 
@@ -127,6 +127,8 @@ Der Scraper wird über die Kommandozeile mit verschiedenen Argumenten gesteuert.
 * `--cache-validation-tolerance <BYTES>`: Toleranz in Bytes für den `Content-Length`-Vergleich, wenn ETag/Last-Modified keine 304-Antwort liefert. Standard: `5` Bytes.
 
 * `--cache-keep`: Wenn gesetzt, werden Cache-Dateien für vergangene Tage NICHT automatisch gelöscht. Standardmäßig werden Cache-Dateien vergangener Tage gelöscht.
+
+* `--cache-blind-read`: Wenn gesetzt, werden Daten aus dem Cache direkt verwendet, ohne erneut überprüft zu werden, sofern sie vorhanden sind. Dadurch werden Aktualitätsprüfungen und bedingte GET-Anfragen für zwischengespeicherte Inhalte umgangen.
 
 * `--max-workers <ANZAHL>`: Maximale Anzahl gleichzeitiger Worker für das Abrufen von Daten. Standard: `10`.
 
@@ -210,15 +212,22 @@ Bitte lesen Sie [diese](contrib/vdr-epg-daemon/README.de.md) Informationen.
 
 * **`HTTP Error 403 (Forbidden)` oder `429 (Too Many Requests)`:** Dies deutet darauf hin, dass die Webseite Ihre Anfragen blockiert. Der Scraper hat eingebaute Retries und Verzögerungen, aber bei aggressiver Nutzung kann dies weiterhin passieren. Erhöhen Sie den `--min-request-delay` oder reduzieren Sie `--max-workers`.
 
-* **Falsche XMLTV-Ausgabe:** Stellen Sie sicher, dass die `channelmap.conf` korrekt ist und die Kanal-IDs den von TVSpielfilm.de verwendeten IDs entsprechen.
+* **Falsche XMLTV-Ausgabe:** Stellen Sie sicher, dass die Kanal-IDs den von TVSpielfilm.de verwendeten IDs entsprechen.
 
 * **Berechtigungsprobleme:** Stellen Sie sicher, dass das Skript und die Ausgabeverzeichnisse die richtigen Lese- und Schreibberechtigungen haben.
 
 ## Entwicklung
 
-Der Scraper ist in Python geschrieben und verwendet `requests` für HTTP-Anfragen und `lxml.html` mit `cssselect` für das Parsen von HTML.
+Dieser Abschnitt bietet Einblicke für Entwickler, die daran interessiert sind, den Scraper zu erweitern oder zu modifizieren.
 
-* **`TvsLeanScraper` Klasse:** Kapselt die gesamte Scraping-Logik.
+### Code-Struktur
+Die Kernlogik ist in der Datei `tvs-scraper` gekapselt. Wichtige Komponenten sind:
+
+* **`TvsLeanScraper`-Klasse:** Dies ist die Hauptklasse, die den Scraping-Prozess orchestriert und HTTP-Anfragen, Caching und den gesamten Datenfluss verwaltet.
+
+* **`TvsHtmlParser`-Klasse:** Speziell für das Parsen von HTML-Inhalten von TVSpielfilm.de, enthält alle notwendigen CSS-Selektoren und regulären Ausdrücke.
+
+Die folgenden Methoden und Funktionen sind ebenfalls zentral für den Betrieb des Scrapers:
 
 * **`fetch_url` Methode:** Verantwortlich für das Abrufen von URLs und die Fehlerbehandlung auf HTTP-Ebene. Sie nutzt `functools.lru_cache` für das In-Memory-Caching von HTTP-Antworten und implementiert einen benutzerdefinierten dateibasierten Caching-Mechanismus mit Inhaltskonsistenzprüfungen, einschließlich `Content-Length` (bei fehlendem 304-Status), sowie ETag/Last-Modified. Sie erzwingt explizit die UTF-8-Dekodierung des Antworttextes.
 
@@ -237,3 +246,12 @@ Der Scraper ist in Python geschrieben und verwendet `requests` für HTTP-Anfrage
 * **`generate_xmltv` Funktion:** Erstellt die XMLTV-Ausgabedatei.
 
 Bei Änderungen an der TVSpielfilm.de-Webseite müssen möglicherweise die CSS-Selektoren in der `TvsHtmlParser`-Klasse aktualisiert werden, um die korrekten Elemente zu finden.
+
+### Abhängigkeiten
+Stellen Sie sicher, dass alle im Abschnitt [Abhängigkeiten](#abhängigkeiten) aufgeführten Abhängigkeiten installiert sind.
+
+### Protokollierung
+Das Skript verwendet Pythons Standard-`logging`-Modul. Sie können die Ausführlichkeit der Protokollierung über Befehlszeilenoptionen (`--log-level` oder `--verbose`) anpassen.
+
+### Mitwirken
+Beiträge sind willkommen! Erstellen Sie gerne Issues für Fehlerberichte oder Funktionsanfragen, oder reichen Sie Pull Requests mit Verbesserungen ein.
