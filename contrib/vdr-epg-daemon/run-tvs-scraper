@@ -122,22 +122,32 @@ fi
 # Extract 'DaysInAdvance' value
 declare -i days
 
-raw_days_value=$(grep -E '^[[:space:]]*DaysInAdvance[[:space:]]*=' "$epgdConf" | \
+conf_DaysInAdvance=$(grep -E '^[[:space:]]*DaysInAdvance[[:space:]]*=' "$epgdConf" | \
 				 sed -E 's/^[[:space:]]*DaysInAdvance[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
 				 tail -n 1)
 
-days="${raw_days_value:-6}"
+if [[ -z "$conf_DaysInAdvance" || ! "$conf_DaysInAdvance" =~ ^[0-9]+$ ]]; then
+	days=6
+	log_message "WARNING: DaysInAdvance in %s is not a valid number or not found. Using default of %s." "$epgdConf" "$days" >&2
+else
+	days=$((conf_DaysInAdvance + 1))
+fi
 
-log_message "Using DaysInAdvance: %s" "$days"
+log_message "Days to Scrape: %s" "$days"
 
 # Extract 'UpdateTime' value
 declare -i UpdateTime
 
-raw_UpdateTime_value=$(grep -E '^[[:space:]]*UpdateTime[[:space:]]*=' "$epgdConf" | \
+conf_UpdateTime=$(grep -E '^[[:space:]]*UpdateTime[[:space:]]*=' "$epgdConf" | \
 					   sed -E 's/^[[:space:]]*UpdateTime[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
 				 	   tail -n 1)
 
-UpdateTime="${raw_UpdateTime_value:-24}"
+if [[ -z "$conf_UpdateTime" || ! "$conf_UpdateTime" =~ ^[0-9]+$ ]]; then
+	UpdateTime=24
+	log_message "WARNING: UpdateTime in %s is not a valid number or not found. Using default of %s." "$epgdConf" "$UpdateTime" >&2
+else
+	UpdateTime="$conf_UpdateTime"
+fi
 
 log_message "Using UpdateTime: %s" "$UpdateTime"
 
