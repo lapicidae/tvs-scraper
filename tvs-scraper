@@ -175,6 +175,7 @@ class TvsHtmlParser:
         self.re_fsk_match: re.Pattern = re.compile(r'(\d+)')
         self.re_rating_class_match: re.Pattern = re.compile(r'rating-(\d+)')
         self.re_adsc_sparte_match: re.Pattern = re.compile(r'"adsc_sparte":"([^"]+)"')
+        self.re_adsc_genre2_match: re.Pattern = re.compile(r'"adsc_genre2":"([^"]+)"')
         self.re_season_episode_match: re.Pattern = re.compile(r'Staffel\s*(\d+),\s*Folge\s*(\d+)(?:/(\d+))?')
 
         self.selector_sender_links: lxml.cssselect.CSSSelector = lxml.cssselect.CSSSelector('div.component.channels.all-channels.abc-scroll ul li a')
@@ -485,45 +486,79 @@ class TvsHtmlParser:
                 if cleaned_paragraphs:
                     detail_data['longdescription'] = _sanitize_xml_string("\n".join(cleaned_paragraphs))
 
-    def _extract_genre_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
+    def _extract_genre_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]], adsc_genre2_value: Optional[str]) -> None:
         """
-        Extracts genre information from the HTML root using a data-driven approach.
+        Extracts genre information from the HTML root based on strict rules.
+
+        Prioritizes `stage-underline` with pipe. If no pipe, validates using `adsc_genre2`.
+        If validation fails or `adsc_genre2` is absent, genre is left empty.
 
         :param root: The lxml HTML root element.
         :type root: lxml.html.HtmlElement
         :param detail_data: The dictionary to update with extracted data.
         :type detail_data: Dict[str, Any]
-        :param detail_sections: Pre-parsed dictionary of detail sections.
+        :param detail_sections: Pre-parsed dictionary of detail sections (not used for genre here).
         :type detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]
+        :param adsc_genre2_value: The value of 'adsc_genre2' extracted from JavaScript, if any.
+        :type adsc_genre2_value: Optional[str]
         """
-        genre_extraction_strategies = [
-            (self.selector_genre_underline_tag,
-             lambda elem: (match.group(1).strip() if (match := self.re_genre_pipe_match.search(elem.text_content().strip())) else elem.text_content().strip())),
-            (self.selector_genre_tag_general,
-             lambda elem: elem.text_content().strip()),
-            (self.selector_genre_time_tag_schedule,
-             lambda elem: (match.group(1).strip() if (match := self.re_genre_pipe_match.search(elem.text_content().strip())) else elem.text_content().strip()))
-        ]
+        detail_data['genre'] = None
 
-        infos_dl = detail_sections.get('Infos')
-        if infos_dl is not None:
-            for dt_element in self.selector_dt(infos_dl):
-                if dt_element.text_content().strip() == "Genre":
-                    genre_dd: Optional[lxml.html.HtmlElement] = dt_element.getnext()
-                    if genre_dd and genre_dd.text_content():
-                        detail_data['genre'] = _sanitize_xml_string(genre_dd.text_content().strip())
-                        return
+        country_year_pattern = re.compile(r'^[A-Z]{2,4}(?:/[A-Z]{2,4})?\s*\d{4}$', re.IGNORECASE)
+        year_only_pattern = re.compile(r'^\d{4}$', re.IGNORECASE)
+        
+        def is_country_year_string(text: str) -> bool:
+            return bool(country_year_pattern.match(text) or year_only_pattern.match(text))
 
-        for selector, processor in genre_extraction_strategies:
-            if detail_data.get('genre'):
-                break
+        underline_genre_elements: List[lxml.html.HtmlElement] = self.selector_genre_underline_tag(root)
+        
+        for elem in underline_genre_elements:
+            elem_text = elem.text_content().strip()
             
-            elements: List[lxml.html.HtmlElement] = selector(root)
-            if elements and elements[0].text_content():
-                extracted_genre = processor(elements[0])
-                if extracted_genre:
-                    detail_data['genre'] = _sanitize_xml_string(extracted_genre)
-                    break
+            if '|' in elem_text:
+                match = self.re_genre_pipe_match.search(elem_text)
+                if match:
+                    potential_genre = match.group(1).strip()
+                    if not is_country_year_string(potential_genre):
+                        detail_data['genre'] = _sanitize_xml_string(potential_genre)
+                        # logger.debug(f"Genre extracted: '{detail_data['genre']}'")
+                        break
+                    else:
+                        logger.debug(f"'{potential_genre}' from stage-underline discarded as it looks like country/year.")
+                else:
+                    logger.debug(f"Pipe found in '{elem_text}', but regex extraction failed. Skipping.")
+            else:
+                logger.debug(f"Potential genre: '{elem_text}'. Attempting validation with advertising context (adsc_genre2).")
+
+                if adsc_genre2_value:
+                    normalized_elem_text = self._normalize_string_for_comparison(elem_text)
+                    normalized_adsc_genre2 = self._normalize_string_for_comparison(adsc_genre2_value)
+
+                    if normalized_elem_text == normalized_adsc_genre2 and not is_country_year_string(elem_text):
+                        detail_data['genre'] = _sanitize_xml_string(elem_text)
+                        logger.debug(f"Genre extracted and validated based on the advertising context (adsc_genre2): '{detail_data['genre']}'")
+                        break
+                    else:
+                        logger.debug(f"Potential genre '{elem_text}' did not match advertising context ('adsc_genre2:{adsc_genre2_value}') or looked like country/year. Genre remains empty.")
+                else:
+                    logger.debug(f"Skipping '{elem_text}' as no advertising context (adsc_genre2) is available for validation. Genre remains empty.")
+
+        if detail_data.get('genre') and is_country_year_string(detail_data['genre']):
+            current_genre = detail_data['genre']
+            logger.warning(f"Final check: Extracted genre '{current_genre}' still looks like country/year. Genre field will be cleared.")
+
+            if not detail_data.get('country'):
+                country_match = re.match(r'^([A-Z]{2,4}(?:/[A-Z]{2,4})?)', current_genre, re.IGNORECASE)
+                if country_match:
+                    detail_data['country'] = _sanitize_xml_string(country_match.group(1))
+            if not detail_data.get('year'):
+                year_match = re.search(r'\d{4}', current_genre)
+                if year_match:
+                    try:
+                        detail_data['year'] = int(year_match.group(0))
+                    except ValueError:
+                        pass
+            detail_data['genre'] = None
 
     def _extract_general_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
@@ -705,10 +740,15 @@ class TvsHtmlParser:
         if adsc_sparte_match:
             detail_data['keyword'] = _sanitize_xml_string(adsc_sparte_match.group(1).strip())
 
+        adsc_genre2_value: Optional[str] = None
+        adsc_genre2_match: Optional[re.Match[str]] = self.re_adsc_genre2_match.search(html_content)
+        if adsc_genre2_match:
+            adsc_genre2_value = adsc_genre2_match.group(1).strip()
+
         detail_sections = self._get_detail_sections(root)
 
         self._extract_description(root, detail_data)
-        self._extract_genre_info(root, detail_data, detail_sections)
+        self._extract_genre_info(root, detail_data, detail_sections, adsc_genre2_value)
         self._extract_general_info(root, detail_data, detail_sections)
         self._extract_cast_info(root, detail_data, detail_sections)
         self._extract_crew_info(root, detail_data, detail_sections)
@@ -1743,7 +1783,7 @@ class TvsLeanScraper:
                         if attempt < self.max_schedule_retries:
                             time.sleep(1 * (attempt + 1))
                         else:
-                            logger.error(f"Max retries ({self.max_schedule_retries}) exhausted for schedule generation for {channel_name} on {current_date.strftime('%Y-%M-%d')}. Skipping this day.")
+                            logger.error(f"Max retries ({self.max_schedule_retries}) exhausted for schedule generation for {channel_name} on {current_date.strftime('%Y-%m-%d')}. Skipping this day.")
                             return []
                 except KeyboardInterrupt:
                     self.stop_event.set()
