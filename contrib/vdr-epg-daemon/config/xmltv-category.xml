@@ -12,128 +12,200 @@
 
 	<categories>
 		<category name="Serie">
-			<contains>reihe</contains>
-			<contains>serie</contains>
-			<contains>telenovela</contains>
-			<contains>soap</contains>
-			<!--<contains>zeichentrick</contains>-->
 			<contains>arzt-hospital</contains>
 			<contains>clips</contains>
+			<contains>reihe</contains>
+			<contains>serie</contains>
 			<contains>sitcom</contains>
+			<contains>soap</contains>
+			<contains>telenovela</contains>
+			<!-- <contains>zeichentrick</contains> -->
 		</category>
 		<category name="Sport">
-			<contains>poker</contains>
-			<contains>tennis</contains>
-			<contains>formel 1</contains>
-			<contains>eishockey</contains>
-			<contains>golf</contains>
-			<contains>wrestling</contains>
-			<contains>segeln</contains>
-			<contains>nascar</contains>
-			<contains>snowboard</contains>
-			<contains>curling</contains>
-			<contains>motorrad</contains>
-			<contains>darts</contains>
-			<contains>bowling</contains>
-			<contains>eisschnelllauf</contains>
-			<contains>billard</contains>
-			<contains>cricket</contains>
-			<contains>biathlon</contains>
+			<contains>badminton</contains>
 			<contains>ball</contains>
+			<contains>biathlon</contains>
+			<contains>billard</contains>
+			<contains>bogenschießen</contains>
+			<contains>bowling</contains>
 			<contains>boxen</contains>
+			<contains>cricket</contains>
+			<contains>curling</contains>
+			<contains>darts</contains>
+			<contains>eishockey</contains>
+			<contains>eisschnelllauf</contains>
+			<contains>fechten</contains>
+			<contains>formel 1</contains>
+			<contains>golf</contains>
+			<contains>kanu</contains>
+			<contains>klettern</contains>
+			<contains>leichtathletik</contains>
+			<contains>motorrad</contains>
+			<contains>nascar</contains>
+			<contains>poker</contains>
+			<contains>rennen</contains>
+			<contains>rudern</contains>
+			<contains>rugby</contains>
+			<contains>schwimmen</contains>
+			<contains>segeln</contains>
 			<contains>ski</contains>
+			<contains>snowboard</contains>
 			<contains>sport</contains>
+			<contains>tennis</contains>
+			<contains>triathlon</contains>
+			<contains>turnen</contains>
+			<contains>wrestling</contains>
 		</category>
 		<category name="Show">
-			<contains>lotterie</contains>
-			<contains>preisverleihung</contains>
-			<contains>volksfest</contains>
-			<contains>zirkus</contains>
+			<contains>duell</contains>
 			<contains>gala</contains>
+			<contains>gewinn</contains>
+			<contains>lotterie</contains>
+			<contains>lotto</contains>
+			<contains>preisverleihung</contains>
 			<contains>quiz</contains>
 			<contains>show</contains>
 			<contains>unterhal</contains>
+			<contains>volksfest</contains>
+			<contains>zirkus</contains>
 		</category>
 		<category name="Kinder">
+			<!--<contains>animation</contains>-->
 			<contains>kinder</contains>
 			<contains>märchen</contains>
+			<contains>schulfernsehen</contains>
+			<!-- <contains>trick</contains> -->
+			<contains>vorschul</contains>
 		</category>
 		<category name="Kultur &amp; Musik">
-			<contains>impressionen</contains>
-			<contains>literatur</contains>
-			<contains>festival</contains>
-			<contains>musical</contains>
-			<contains>theater</contains>
-			<contains>sketch</contains>
-			<contains>lustspiel</contains>
-			<contains>schwank</contains>
-			<contains>konzert</contains>
-			<contains>oper</contains>
 			<contains>comedy</contains>
+			<contains>festival</contains>
+			<contains>impressionen</contains>
 			<contains>kabarett</contains>
+			<contains>konzert</contains>
 			<contains>kunst</contains>
+			<contains>literatur</contains>
+			<contains>lustspiel</contains>
+			<contains>musical</contains>
 			<contains>musik</contains>
-			<contains>satire</contains>
+			<contains>oper</contains>
+			<!--<contains>satire</contains>-->
+			<contains>schwank</contains>
+			<contains>sketch</contains>
+			<contains>theater</contains>
 		</category>
 		<category name="Information">
 			<contains>dokumenta</contains>
 		</category>
 		<category name="Spielfilm">
+			<contains>abenteuer</contains>
 			<contains>action</contains>
+			<contains>animation</contains>
+			<contains>biografie</contains>
 			<contains>biopic</contains>
-			<contains>drama</contains>
+			<contains>dystopie</contains>
 			<contains>epos</contains>
 			<contains>fantasy</contains>
 			<contains>fiction</contains>
 			<contains>film</contains>
+			<contains>grotesk</contains>
 			<contains>horror</contains>
+			<contains>kitsch</contains>
+			<contains>klassiker</contains>
 			<contains>komödie</contains>
 			<contains>krimi</contains>
 			<contains>movie</contains>
 			<contains>parodie</contains>
+			<contains>posse</contains>
+			<contains>rührstück</contains>
+			<contains>saga</contains>
+			<contains>satire</contains>
+			<contains>schmonzette</contains>
+			<contains>schnulz</contains>
+			<contains>schmus</contains>
+			<contains>slapstick</contains>
+			<contains>spaß</contains>
 			<contains>thriller</contains>
+			<!-- <contains>trash</contains> -->
+			<contains>dram</contains>		<!-- drama, dramolett, dramödie, melodram -->
+			<contains>klam</contains>		<!-- klamauk, klamotte -->
+			<contains>roman</contains>		<!-- romantik, romanze -->
+			<contains>sci</contains>		<!-- sci-fi, science-fiction, sciencefiction -->
+			<contains>stern</contains>		<!-- eastern, western -->
+		</category>
+		<category name="Serie">
+			<contains>anime</contains>
 		</category>
 		<category name="Information">
-			<contains>interview</contains>
-			<contains>sitzung</contains>
 			<contains>ansprache</contains>
-			<contains>gottesdienst</contains>
-			<contains>bürgersendung</contains>
-			<contains>informationen</contains>
-			<contains>umwelt</contains>
-			<contains>geschichte</contains>
-			<contains>tiere</contains>
-			<contains>technik</contains>
-			<contains>verkehr</contains>
-			<contains>recht</contains>
-			<contains>porträt</contains>
-			<contains>gespräch</contains>
-			<contains>vortrag</contains>
 			<contains>bericht</contains>
 			<contains>bildung</contains>
 			<contains>boulevard</contains>
+			<contains>bürgersendung</contains>
 			<contains>diskussion</contains>
 			<contains>doku</contains>
 			<contains>forschung</contains>
+			<contains>geschichte</contains>
+			<contains>gespräch</contains>
+			<contains>gottesdienst</contains>
+			<contains>info</contains>
+			<contains>interview</contains>
 			<contains>magazin</contains>
+			<contains>mode</contains>
 			<contains>nachrichten</contains>
 			<contains>natur</contains>
 			<contains>polit</contains>
+			<contains>porträt</contains>
 			<contains>ratgeber</contains>
+			<contains>recht</contains>
+			<contains>regio</contains>
 			<contains>reise</contains>
 			<contains>report</contains>
-			<contains>reportage</contains>
-			<contains>soziales</contains>
-			<contains>wetter</contains>
-			<contains>wissen</contains>
-			<contains>wirtschaft</contains>
-			<contains>information</contains>
-			<contains>pr.-info</contains>
-			<contains>mode</contains>
-			<contains>sprachkurs</contains>
 			<contains>rückblick</contains>
+			<contains>sitzung</contains>
+			<contains>sonder</contains>
+			<contains>soziales</contains>
+			<contains>sprachkurs</contains>
+			<contains>technik</contains>
+			<contains>tiere</contains>
+			<contains>umwelt</contains>
+			<contains>verbraucher</contains>
+			<contains>verkehr</contains>
+			<contains>vortrag</contains>
+			<contains>wetter</contains>
+			<contains>wirtschaft</contains>
+			<contains>wissen</contains>
+		</category>
+		<category name="Erotik">
+			<contains>erotik</contains>
+			<contains>porn</contains>
+			<contains>sex</contains>
+		</category>
+		<category name="Werbung">
+			<contains>verkauf</contains>
+			<contains>werb</contains>
 		</category>
 	</categories>
 
 </mapping>
 
+<!-- The following genres are still looking for a reasonable classification.
+	feature
+	festakt
+	fitnessübungen
+	kamerafahrt
+	kirche
+	koch
+	making of
+	mockumentary
+	programm nach ansage	// ;-)
+	rock + pop
+	schauspiel
+	schlager				// The category 'Kultur &amp; Musik' is problematic because film genres such as 'Schlagerkrimi' and 'Schlagerschnulze' exist.
+	special
+	spendenmarathon
+	talk
+	tiervermittlung
+	tv-fahndung
+	wettbewerb
+-->
