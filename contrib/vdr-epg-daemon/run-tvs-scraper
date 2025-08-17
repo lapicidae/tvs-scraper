@@ -67,7 +67,7 @@ runTVSconfigFile="${runTVSconfigFile:-"/etc/run-tvs-scraper.conf"}"
 
 if [ -r "$runTVSconfigFile" ]; then
 	# shellcheck source=/dev/null
-	source "$runTVSconfigFile"
+	source "$(readlink -e "$runTVSconfigFile")"
 	log_message "Configuration read from: %s" "$runTVSconfigFile"
 fi
 
@@ -75,8 +75,8 @@ fi
 PYTHON_SCRIPT_ARGS=("$@")
 
 # Check config file
-if [ ! -f "$epgdConf" ]; then
-  log_message "Error: Configuration file '%s' not found." "$epgdConf" >&2
+if [ ! -r "$epgdConf" ]; then
+  log_message "Error: Configuration file '%s' not found or unreadable." "$epgdConf" >&2
   exit 1
 fi
 
