@@ -28,17 +28,19 @@ Dieser Python-basierte Scraper ist darauf ausgelegt, EPG-Daten (Electronic Progr
 
 ### Abhängigkeiten
 
-Der Scraper verwendet hauptsächlich `lxml` für effizientes HTML-Parsing und `cssselect` für die Unterstützung von CSS-Selektoren. Für den Dateizugriff mit Locks wird `portalocker` verwendet. Die Zeitzoneninformationen werden über das standardmäßige `zoneinfo`-Modul (ab Python 3.9) gehandhabt. Er benötigt die folgenden Python-Bibliotheken:
+Der Scraper verwendet hauptsächlich `lxml` für effizientes HTML-Parsing und `cssselect` für die Unterstützung von CSS-Selektoren. Für den Dateizugriff mit Locks wird `portalocker` verwendet. Für die korrekte Bestimmung des benutzerspezifischen Cache-Verzeichnisses auf verschiedenen Betriebssystemen kommt die Bibliothek `platformdirs` zum Einsatz. Die Zeitzoneninformationen werden über das standardmäßige `zoneinfo`-Modul (ab Python 3.9) gehandhabt.  
+Er benötigt die folgenden Python-Bibliotheken:
 
-* `requests`
-* `lxml`
 * `cssselect`
+* `lxml`
+* `platformdirs`
 * `portalocker`
+* `requests`
 
 Sie können diese mit pip installieren:
 
 ```bash
-pip install requests lxml cssselect portalocker
+pip install cssselect lxml platformdirs portalocker requests
 ```
 
 ### Ausführbar machen

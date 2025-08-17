@@ -28,17 +28,19 @@ This Python-based scraper is designed to extract EPG (Electronic Program Guide) 
 
 ### Dependencies
 
-The scraper primarily uses `lxml` for efficient HTML parsing and `cssselect` for CSS selector support. For file access with locks, `portalocker` is used. Timezone information is handled via the standard `zoneinfo` module (available from Python 3.9+). It requires the following Python libraries:
+The scraper primarily uses `lxml` for efficient HTML parsing and `cssselect` for CSS selector support. For file access with locks, `portalocker` is used. For determining the correct user-specific cache directory across different operating systems, the `platformdirs` library is utilized. Timezone information is handled via the standard `zoneinfo` module (available from Python 3.9+).  
+It requires the following Python libraries:
 
-* `requests`
-* `lxml`
 * `cssselect`
+* `lxml`
+* `platformdirs`
 * `portalocker`
+* `requests`
 
 You can install these using pip:
 
 ```bash
-pip install requests lxml cssselect portalocker
+pip install cssselect lxml platformdirs portalocker requests
 ```
 
 ### Make Executable

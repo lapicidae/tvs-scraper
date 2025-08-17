@@ -24,11 +24,11 @@ import re
 import requests
 import shutil
 import sys
-import tempfile
 import threading
 import time
 from argparse import RawTextHelpFormatter
 from datetime import datetime, timedelta, timezone
+from platformdirs import user_cache_dir
 from requests.adapters import HTTPAdapter
 from typing import List, Dict, Optional, Any, Tuple
 from urllib.parse import urlparse, parse_qs
@@ -46,7 +46,7 @@ DEFAULT_IMAGE_SIZE: str = "600"
 DEFAULT_IMAGE_CHECK: bool = False
 MAX_DAYS_TO_SCRAPE: int = 14
 
-DEFAULT_CACHE_SUBDIRECTORY: str = "tvs-cache"
+DEFAULT_CACHE_SUBDIRECTORY: str = "tvs-scraper"
 DEFAULT_CACHE_DISABLE: bool = False
 DEFAULT_CACHE_TTL_SECONDS: int = 24 * 60 * 60 # 24 hours
 CACHE_CHANNEL_LIST_FILE: str = "channels.json"
@@ -937,7 +937,7 @@ class TvsLeanScraper:
         else:
             logger.debug("Image URL validity checks (--img-check) are DISABLED.")
 
-        self.cache_dir: str = cache_dir_path if cache_dir_path else os.path.join(tempfile.gettempdir(), DEFAULT_CACHE_SUBDIRECTORY)
+        self.cache_dir: str = cache_dir_path if cache_dir_path else user_cache_dir(appname=DEFAULT_CACHE_SUBDIRECTORY)
 
         if os.path.exists(self.cache_dir):
             if not os.path.isdir(self.cache_dir):
@@ -2525,7 +2525,7 @@ Examples:
     parser.add_argument(
         '--cache-dir',
         type=str,
-        help=f'Specifies a custom directory for cache files. Default is a subdirectory "{DEFAULT_CACHE_SUBDIRECTORY}" in the system temporary directory.'
+        help=f'Specifies a custom directory for cache files. Default: "{user_cache_dir(appname=DEFAULT_CACHE_SUBDIRECTORY)}".'
     )
     parser.add_argument(
         '--cache-clear',
@@ -2641,7 +2641,7 @@ Examples:
     logging.root.setLevel(numeric_level)
     logger.setLevel(numeric_level)
 
-    base_cache_path: str = args.cache_dir if args.cache_dir else os.path.join(tempfile.gettempdir(), DEFAULT_CACHE_SUBDIRECTORY)
+    base_cache_path: str = args.cache_dir if args.cache_dir else user_cache_dir(appname=DEFAULT_CACHE_SUBDIRECTORY)
 
     if args.clear_cache:
         if os.path.exists(base_cache_path):
