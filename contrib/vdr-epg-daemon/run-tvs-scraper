@@ -66,8 +66,9 @@ log_message() {
 runTVSconfigFile="${runTVSconfigFile:-"/etc/run-tvs-scraper.conf"}"
 
 if [ -r "$runTVSconfigFile" ]; then
+	runTVSconfigFile="$(readlink -e "$runTVSconfigFile")"
 	# shellcheck source=/dev/null
-	source "$(readlink -e "$runTVSconfigFile")"
+	source "$runTVSconfigFile"
 	log_message "Configuration read from: %s" "$runTVSconfigFile"
 fi
 
