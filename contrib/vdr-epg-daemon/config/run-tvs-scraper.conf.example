@@ -1,0 +1,25 @@
+# ================================================================= #
+#       Configuration for the 'run-tvs-scraper' Script              #
+# ================================================================= #
+#
+# File Path: /etc/epgd/run-tvs-scraper.conf
+#
+
+# tvsScraperPath='/usr/bin/tvs-scraper'     # Path to the tvs-scraper executable
+# cacheDir='/epgd/cache/tvs-xmltv'          # Cache directory used by the tvs-scraper
+
+# epgdConf='/epgd/config/epgd.conf'         # Path to config file of 'vdr-epg-daemon'
+# chMap='/epgd/config/channelmap.conf'      # Path to channel mapping of 'vdr-epg-daemon'
+# xmltvTLD='tvs'                            # Default channel ID domain used in 'channelmap.conf' and xmltv -> No changes should be necessary
+
+# outFile='/epgd/cache/tvs-xmltv.xml'       # Path to the XMLTV output file (optional) <- is usually taken from the value 'xmltv.input' in 'epgd.conf'
+
+# logLevel='WARNING'                        # Sets the logging level. Options: DEBUG, INFO, WARNING, ERROR, CRITICAL
+# syslogEnable='true'                       # The output is forwarded to syslog
+# syslogIdent='tvs-scraper'                 # Syslog identifier
+
+# alwaysUpdate=true                         # Skip all checks and overwrite the output file
+# dummyMode=true                            # Do nothing -> Terminates the script without further action
+
+# Additional arguments - see 'tvs-scraper -h'
+# extraArgs=('--cache-blind-read' '--max-workers 15')

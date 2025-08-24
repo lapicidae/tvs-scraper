@@ -17,14 +17,17 @@ set -euo pipefail
 # syslogIdent='tvs-scraper'					# Syslog identifier
 
 # alwaysUpdate=true							# Skip all checks and overwrite the output file
+# dummyMode=true							# Do nothing -> Terminates the script without further action
 
 # runTVSconfigFile='/epgd/config/run-tvs-scraper.conf'	# External file to define the above config variables (use either the file or the variables, not both)
+# extraArgs=()								# Array with additional arguments that are passed to tvs-scraper
 
 
 ## defaults (do not change)
 alwaysUpdate="${alwaysUpdate:-false}"
 cacheDir="${cacheDir:-"/var/cache/tvs-scraper"}"
 chMap="${chMap:-"/etc/epgd/channelmap.conf"}"
+dummyMode="${dummyMode:-false}"
 epgdConf="${epgdConf:-"/etc/epgd/epgd.conf"}"
 logLevel="${logLevel:-"INFO"}"
 outFile="${outFile:-}"						# Initialize outFile variable, will be overridden if config or epgd.conf provides it
@@ -33,51 +36,79 @@ syslogIdent="${syslogIdent:-"tvs-scraper"}"
 tvsScraperPath="${tvsScraperPath:-"/usr/local/bin/tvs-scraper"}"
 xmltvTLD="${xmltvTLD:-"tvs"}"
 
+declare -a extraArgs
+
 # Joins array elements with a separator
 join() {
 	local IFS="$1"
 	shift
-	printf "%s" "$1"
+	printf '%s' "$1"
 	shift
 	for arg in "$@"; do
-		printf "%s%s" "$IFS" "$arg"
+		printf '%s%s' "$IFS" "$arg"
 	done
 }
 
-# Function to print messages, optionally to syslog
-# Usage: log_message "Error: Something went wrong" >&2
-# Usage: log_message "Info: Processing data"
+# Function to print messages, optionally to syslog, with dynamic priority
+# Usage: log_message 'ERROR: Something went wrong" >&2
+# Usage: log_message 'INFO: Processing data"
 log_message() {
-	local format="$1"; shift
-	local formatted="$format"
+	local input="$1"; shift
+	local msg="$input"
+	local syslogPrio
 
 	for arg in "$@"; do
-		formatted="${formatted/\%s/$arg}"
+		msg="${msg/\%s/$arg}"
 	done
 
-	if [ "$syslogEnable" = true ]; then
-		logger -t "$syslogIdent" "$formatted"
+	# Determine syslog priority based on the lowercase message content
+	local msgLower="${msg,,}"
+
+	if [[ "$msgLower" =~ ^(error|crit|fatal): ]]; then
+		syslogPrio='user.err'
+	elif [[ "$msgLower" =~ ^(warning): ]]; then
+		syslogPrio='user.warning'
+	elif [[ "$msgLower" =~ ^(info): ]]; then
+		syslogPrio='user.info'
 	else
-		printf '%s\n' "$formatted"
+		syslogPrio='user.notice'
+	fi
+
+	if [ "$syslogEnable" = true ]; then
+		logger -t "$syslogIdent" -p "$syslogPrio" "$msg"
+	else
+		printf '%s\n' "$msg"
 	fi
 }
 
 # config file
-runTVSconfigFile="${runTVSconfigFile:-"/etc/run-tvs-scraper.conf"}"
+runTVSconfigFile="${runTVSconfigFile:-"/etc/epgd/run-tvs-scraper.conf"}"
 
 if [ -r "$runTVSconfigFile" ]; then
 	runTVSconfigFile="$(readlink -e "$runTVSconfigFile")"
 	# shellcheck source=/dev/null
 	source "$runTVSconfigFile"
-	log_message "Configuration read from: %s" "$runTVSconfigFile"
+	log_message 'Configuration read from: %s' "$runTVSconfigFile"
+fi
+
+# Dummy mode
+if [ "$dummyMode" = true ]; then
+	log_message 'Dummy mode enabled... Exit now'
+	exit 0
 fi
 
 # Store arguments to pass to the Python script
-PYTHON_SCRIPT_ARGS=("$@")
+extraScriptArgs=("$@")
+
+# Check if extraArgs array is set in the config file and append them.
+if declare -p extraArgs &>/dev/null; then
+  log_message 'Appending additional arguments from config file: %s' "$(join ' ' "${extraArgs[@]}")"
+  extraScriptArgs+=("${extraArgs[@]}")
+fi
 
 # Check config file
 if [ ! -r "$epgdConf" ]; then
-  log_message "Error: Configuration file '%s' not found or unreadable." "$epgdConf" >&2
+  log_message 'ERROR: Configuration file "%s" not found or unreadable.' "$epgdConf" >&2
   exit 1
 fi
 
@@ -85,130 +116,134 @@ fi
 # If outFile is already set (e.g., via initial config), use it.
 if [ -z "$outFile" ]; then
 	# If outFile is not set, try to extract 'xmltv.input' value from epgdConf
-	raw_outFile_value=$(grep -E '^[[:space:]]*xmltv.input[[:space:]]*=' "$epgdConf" | \
+	outFileConfValue=$(grep -E '^[[:space:]]*xmltv.input[[:space:]]*=' "$epgdConf" | \
 						sed -E 's/^[[:space:]]*xmltv.input[[:space:]]*=[[:space:]]*(.*)[[:space:]]*$/\1/' | \
-						tail -n 1)
-	outFile="${raw_outFile_value:-"$cacheDir/tvs_xmltv.xml"}" # Fallback to default if not found in epgdConf
+						tail -n 1) || true
+	outFile="${outFileConfValue:-"$cacheDir/tvs_xmltv.xml"}" # Fallback to default if not found in epgdConf
 fi
 
-log_message "Using output file: %s" "$outFile"
+log_message 'Using output file: %s' "$outFile"
 
 # Check if output directory exists and is writable
-output_dir=$(dirname "${outFile}")
+outputDir=$(dirname "${outFile}")
 
-if [ ! -d "$output_dir" ]; then
-	log_message "Warning: Output directory '%s' does not exist and is being created." "$output_dir" >&2
-	mkdir -p "$output_dir"
-elif [ ! -w "$output_dir" ]; then
-	log_message "Error: Output directory '%s' is not writable." "$output_dir" >&2
+if [ ! -d "$outputDir" ]; then
+	log_message 'WARNING: Output directory "%s" does not exist and is being created.' "$outputDir" >&2
+	mkdir -p "$outputDir"
+elif [ ! -w "$outputDir" ]; then
+	log_message 'ERROR: Output directory "%s" is not writable.' "$outputDir" >&2
 	exit 1
 fi
 
 # Check if output file exists and is writable, or if it can be created
 if [ -f "$outFile" ] && [ ! -w "$outFile" ]; then
-	log_message "Error: Output file '%s' exists but is not writable." "$outFile" >&2
+	log_message 'ERROR: Output file "%s" exists but is not writable.' "$outFile" >&2
 	exit 1
 fi
 
 # Check if cache directory exists and is writable
 if [ ! -d "$cacheDir" ]; then
-	log_message "Warning: The cache directory '%s' does not exist and is being created." "$cacheDir" >&2
+	log_message 'WARNING: The cache directory "%s" does not exist and is being created.' "$cacheDir" >&2
 	mkdir -p "$cacheDir"
 fi
 if [ ! -w "$cacheDir" ]; then
-	log_message "Error: Cache directory '%s' is not writable." "$cacheDir" >&2
+	log_message 'ERROR: Cache directory "%s" is not writable.' "$cacheDir" >&2
 	exit 1
 fi
 
 # Extract 'DaysInAdvance' value
 declare -i days
 
-conf_DaysInAdvance=$(grep -E '^[[:space:]]*DaysInAdvance[[:space:]]*=' "$epgdConf" | \
-				 sed -E 's/^[[:space:]]*DaysInAdvance[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
-				 tail -n 1)
+confDaysInAdvance=$(grep -E '^[[:space:]]*DaysInAdvance[[:space:]]*=' "$epgdConf" | \
+				 	 sed -E 's/^[[:space:]]*DaysInAdvance[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
+				 	 tail -n 1) || true
 
-if [[ -z "$conf_DaysInAdvance" || ! "$conf_DaysInAdvance" =~ ^[0-9]+$ ]]; then
-	days=6
-	log_message "WARNING: DaysInAdvance in %s is not a valid number or not found. Using default of %s." "$epgdConf" "$days" >&2
+if [[ -z "$confDaysInAdvance" || ! "$confDaysInAdvance" =~ ^[0-9]+$ ]]; then
+	days=8
+	# log_message 'WARNING: DaysInAdvance in %s is not a valid number or not found. Using default of %s." "$epgdConf" "$days" >&2
 else
-	days=$((conf_DaysInAdvance + 1))
+	days=$((confDaysInAdvance + 1))
 fi
 
-log_message "Days to Scrape: %s" "$days"
+log_message 'Days to Scrape: %s' "$days"
 
 # Extract 'UpdateTime' value
 declare -i UpdateTime
 
-conf_UpdateTime=$(grep -E '^[[:space:]]*UpdateTime[[:space:]]*=' "$epgdConf" | \
-					   sed -E 's/^[[:space:]]*UpdateTime[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
-				 	   tail -n 1)
+confUpdateTime=$(grep -E '^[[:space:]]*UpdateTime[[:space:]]*=' "$epgdConf" | \
+				  sed -E 's/^[[:space:]]*UpdateTime[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
+				  tail -n 1) || true
 
-if [[ -z "$conf_UpdateTime" || ! "$conf_UpdateTime" =~ ^[0-9]+$ ]]; then
-	UpdateTime=24
-	log_message "WARNING: UpdateTime in %s is not a valid number or not found. Using default of %s." "$epgdConf" "$UpdateTime" >&2
+if [[ -z "$confUpdateTime" || ! "$confUpdateTime" =~ ^[0-9]+$ ]]; then
+	UpdateTime=6
+	# log_message 'WARNING: UpdateTime in %s is not a valid number or not found. Using default of %s." "$epgdConf" "$UpdateTime" >&2
 else
-	UpdateTime="$conf_UpdateTime"
+	UpdateTime="$confUpdateTime"
 fi
 
-log_message "Using UpdateTime: %s" "$UpdateTime"
+log_message 'Using UpdateTime: %s' "$UpdateTime"
 
 # Calculate minutes for find command
 declare -i UpdateTimeMinutes
 UpdateTimeMinutes=$((UpdateTime * 60))
 
 # By default, we assume an update is NOT needed.
-update_needed=false
+updateNeeded=false
 
 if [ "$alwaysUpdate" = true ]; then
-	log_message "Update is enforced."
-	update_needed=true
+	log_message 'Update is enforced.'
+	updateNeeded=true
 else
 	# 1. Condition: Does the output file NOT exist? Then an update is needed.
 	if [ ! -f "$outFile" ]; then
-		log_message "Output file '%s' does not exist. Update needed." "$outFile"
-		update_needed=true
+		log_message 'Output file "%s" does not exist. Update needed.' "$outFile"
+		updateNeeded=true
 	# 2. Condition: Does the output file exist, but is it older than 'UpdateTime' hours?
 	#    -mmin +X checks if the file is OLDER than X minutes.
 	elif find "$outFile" -mmin +"$UpdateTimeMinutes" -print -quit | grep -q .; then
-		log_message "'%s' is older than %s hours. Update needed." "$outFile" "$UpdateTime"
-		update_needed=true
+		log_message '"%s" is older than %s hours. Update needed.' "$outFile" "$UpdateTime"
+		updateNeeded=true
 	# 3. Condition: Is the mapping file newer than the output file?
 	#    This is important to react to mapping changes.
 	elif [ "$chMap" -nt "$outFile" ]; then
-		log_message "Mapping file '%s' is newer than output file '%s'. Update needed." "$chMap" "$outFile"
-		update_needed=true
+		log_message 'Mapping file "%s" is newer than output file "%s". Update needed.' "$chMap" "$outFile"
+		updateNeeded=true
 	else
 		# None of the conditions for an update are met.
-		log_message "Output file '%s' is up-to-date and mapping unchanged. No update needed." "$outFile"
+		log_message 'Output file "%s" is up-to-date and mapping unchanged. No update needed.' "$outFile"
 	fi
 fi
 
 # Extract channel IDs
 if [ ! -f "$chMap" ]; then
-	log_message "Error: Channel map file '%s' not found." "$chMap" >&2
+	log_message 'ERROR: Channel map file "%s" not found.' "$chMap" >&2
 	exit 1
 fi
 
-mapfile -t channel_ids_array < <(grep '^xmltv:' "$chMap" | sed -E "s/^xmltv:([^.]+)\\.${xmltvTLD}.*$/\\1/")
+mapfile -t channelIDsArray < <(grep '^xmltv:' "$chMap" | sed -E "s/^xmltv:([^.]+)\\.${xmltvTLD}.*$/\\1/")
 
 # Join channel IDs with a comma
-joined_channel_ids=""
-if [ "${#channel_ids_array[@]}" -gt 0 ]; then
-	joined_channel_ids=$(join ',' "${channel_ids_array[@]}")
+joinedChannelIDs=""
+if [ "${#channelIDsArray[@]}" -gt 0 ]; then
+	joinedChannelIDs=$(join ',' "${channelIDsArray[@]}")
 fi
 
 # Execute tvs-scraper if an update is needed and channel IDs are found
-if [ "$update_needed" = true ]; then
-	if [ -n "$joined_channel_ids" ]; then
-		log_message "Executing tvs-scraper for IDs: %s" "${joined_channel_ids}"
+if [ "$updateNeeded" = true ]; then
+	if [ -n "$joinedChannelIDs" ]; then
+		log_message 'Executing tvs-scraper for IDs: %s' "${joinedChannelIDs}"
 		if [ "$syslogEnable" = true ]; then
-			"$tvsScraperPath" --channel-ids "${joined_channel_ids}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-syslog --log-syslog-tag "${syslogIdent}" --log-level "${logLevel}" "${PYTHON_SCRIPT_ARGS[@]}"
+			"$tvsScraperPath" --channel-ids "${joinedChannelIDs}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-syslog --log-syslog-tag "${syslogIdent}" --log-level "${logLevel}" "${extraScriptArgs[@]}"
 		else
-			"$tvsScraperPath" --channel-ids "${joined_channel_ids}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-level "${logLevel}" "${PYTHON_SCRIPT_ARGS[@]}"
+			"$tvsScraperPath" --channel-ids "${joinedChannelIDs}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-level "${logLevel}" "${extraScriptArgs[@]}"
 		fi
 	else
-		log_message "No XMLTV channel IDs found in '%s'. tvs-scraper will not be executed." "$chMap"
+		log_message 'No XMLTV channel IDs found in "%s". tvs-scraper will not be executed.' "$chMap"
 	fi
 else
-	log_message "Skipping tvs-scraper execution as no update is needed."
+	log_message 'Skipping tvs-scraper execution as no update is needed.'
 fi
+
+
+# vim: ts=4 sw=4 noet:
+# kate: space-indent off; indent-width 4; mixed-indent off;
