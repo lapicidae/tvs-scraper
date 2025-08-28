@@ -90,7 +90,7 @@ Der Scraper wird über die Kommandozeile mit verschiedenen Argumenten gesteuert.
 
 ### Wichtige Optionen
 
-* `--list-channels`: Listet alle verfügbaren Kanal-IDs und deren Namen auf und beendet das Skript. Nützlich, um die `channelmap.conf` zu konfigurieren.
+* `--list-channels`: Listet alle verfügbaren Kanal-IDs und deren Namen auf.
 
 * `--channel-ids <IDS>`: Eine kommagetrennte Liste von Kanal-IDs (z.B. `"ARD,ZDF"`). Wenn nicht angegeben, werden alle gefundenen Kanäle gescrapt.
 
@@ -100,7 +100,7 @@ Der Scraper wird über die Kommandozeile mit verschiedenen Argumenten gesteuert.
 
 * `--days <ANZAHL>`: Anzahl der Tage, die gescrapt werden sollen (1-14). Standard: `1`. Dieses Argument wird ignoriert, wenn `--date` angegeben ist.
 
-* `--output-file <DATEI>`: Pfad zur Ausgabedatei. Die Dateierweiterung (`.json` oder `.xml`) wird automatisch hinzugefügt, falls nicht vorhanden. Standard: `tvspielfilm`.
+* `--output-file <DATEI>`: Ausgabedatei, in die die gesammelten Daten geschrieben werden. Der Standardausgabepfad ist das aktuelle Arbeitsverzeichnis. Standard: `tvspielfilm.xml`.
 
 * `--output-format <FORMAT>`: Ausgabeformat: `"xmltv"` oder `"json"`. Standard: `xmltv`.
 
@@ -108,7 +108,7 @@ Der Scraper wird über die Kommandozeile mit verschiedenen Argumenten gesteuert.
 
 * `--img-size <GRÖSSE>`: Bildgröße für die extrahierten URLs (`"150"`, `"300"` oder `"600"`). Standard: `600`.
 
-* `--img-check`: Führt eine zusätzliche HEAD-Anfrage durch, um die Gültigkeit der Bild-URLs zu überprüfen. Erhöht die Scraping-Zeit.
+* `--img-check`: Überprüft die Gültigkeit der Bild-URLs. Erhöht die Scraping-Zeit.
 
 * `--log-level <LEVEL>`: Setzt das Logging-Level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Standard: `WARNING`.
 

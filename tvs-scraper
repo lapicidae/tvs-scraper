@@ -2438,63 +2438,63 @@ Examples:
     parser.add_argument(
         '--list-channels',
         action='store_true',
-        help='Lists all available channel IDs and their names, then exits.'
+        help='Lists all available channel IDs and their names.'
     )
     parser.add_argument(
         '--channel-ids',
         type=str,
-        help='Comma-separated list of channel IDs (e.g., "ARD,ZDF"). If not specified, all channels will be scraped.'
+        help='Comma-separated list of channel IDs (e.g., "ARD,ZDF").\nIf not specified, all available channels will be scraped.'
     )
     parser.add_argument(
         '--channel-ids-file',
         type=str,
-        help='Path to a file containing a comma-separated list of channel IDs. If specified, this option takes precedence over --channel-ids.'
+        help='Path to a file containing a comma-separated list of channel IDs.\nIf specified, this option takes precedence over --channel-ids.'
     )
 
     parser.add_argument(
         '--date',
         type=validate_date,
         dest='start_date_obj',
-        help='Specific date to scrape in YYYYMMDD format (e.g., 20250523). If specified, only this date will be scraped and --days will be ignored.'
+        help='Specific date to scrape in YYYYMMDD format (e.g., 20250523).\nIf specified, only this date will be scraped and --days will be ignored.'
     )
     parser.add_argument(
         '--days',
         type=validate_days,
         default=DEFAULT_DAYS,
-        help=f'Number of days to scrape (1-{MAX_DAYS_TO_SCRAPE}). Default: {DEFAULT_DAYS}. Ignored if --date is specified.'
+        help=f'Number of days to scrape (1-{MAX_DAYS_TO_SCRAPE}).\nIgnored if --date is specified.\nDefault: {DEFAULT_DAYS}'
     )
 
     parser.add_argument(
         '--output-file',
         type=str,
         default=DEFAULT_OUTPUT_FILE,
-        help=f'Path to the output file. If the default filename is used, the file extension will be automatically appended based on --output-format (e.g., .json for "json", .xml for "xmltv"). If a custom filename is provided, it will be used exactly as specified. Default: "{DEFAULT_OUTPUT_FILE}".'
+        help=f'Output file to which the collected data is written.\nThe default output path is the current working directory.\nDefault: "{os.path.join(os.getcwd(), f"{DEFAULT_OUTPUT_FILE}{".xml" if DEFAULT_OUTPUT_FORMAT == "xmltv" else ".json"}")}"'
     )
     parser.add_argument(
         '--output-format',
         type=str,
         default=DEFAULT_OUTPUT_FORMAT,
         choices=['xmltv', 'json'],
-        help=f'Output format: "xmltv", "json" (JSON array). Default: {DEFAULT_OUTPUT_FORMAT}.'
+        help=f'Output format: "xmltv", "json" (JSON array).\nDefault: {DEFAULT_OUTPUT_FORMAT}'
     )
     parser.add_argument(
         '--xmltv-timezone',
         type=str,
         default='Europe/Berlin',
-        help='Specifies the timezone to use for XMLTV output (e.g., "Europe/Berlin", "America/New_York"). This affects the timestamps in the XMLTV file. Default: "Europe/Berlin".'
+        help='Specifies the timezone to use for XMLTV output (e.g., "Europe/Berlin", "America/New_York").\nThis affects the timestamps in the XMLTV file.\nDefault: "Europe/Berlin"'
     )
     parser.add_argument(
         '--img-size',
         type=str,
         choices=['150', '300', '600'],
         default=DEFAULT_IMAGE_SIZE,
-        help=f'Image size to extract ("150", "300" or "600"). Default: {DEFAULT_IMAGE_SIZE}.'
+        help=f'Image width to extract ("150", "300" or "600").\nDefault: {DEFAULT_IMAGE_SIZE}'
     )
     parser.add_argument(
         '--img-check',
         action='store_true',
         dest='check_image',
-        help='If set, an additional HEAD request will be performed to check the validity of image URLs. This may increase scraping time.'
+        help='If set, the validity of the image URLs will be checked.\nThis may increase scraping time.'
     )
 
     parser.add_argument(
@@ -2502,7 +2502,7 @@ Examples:
         type=str,
         default='WARNING',
         choices=['DEBUG', 'INFO', 'WARNING', 'ERROR', 'CRITICAL'],
-        help='Sets the logging level. Options: DEBUG, INFO, WARNING, ERROR, CRITICAL. Default: WARNING.'
+        help='Sets the logging level. Options: DEBUG, INFO, WARNING, ERROR, CRITICAL.\nDefault: WARNING'
     )
     parser.add_argument(
         '--log-verbose',
@@ -2521,13 +2521,13 @@ Examples:
         type=str,
         default=DEFAULT_SYSLOG_TAG,
         dest='syslog_tag',
-        help=f'Identifier (tag) for Syslog messages. Default: "{DEFAULT_SYSLOG_TAG}".'
+        help=f'Identifier (tag) for Syslog messages.\nDefault: "{DEFAULT_SYSLOG_TAG}"'
     )
 
     parser.add_argument(
         '--cache-dir',
         type=str,
-        help=f'Specifies a custom directory for cache files. Default: "{user_cache_dir(appname=DEFAULT_CACHE_SUBDIRECTORY)}".'
+        help=f'Specifies a custom directory for cache files.\nDefault: "{user_cache_dir(appname=DEFAULT_CACHE_SUBDIRECTORY)}"'
     )
     parser.add_argument(
         '--cache-clear',
@@ -2540,69 +2540,69 @@ Examples:
         action='store_true',
         default=DEFAULT_CACHE_DISABLE,
         dest='disable_cache',
-        help='Disables caching of processed data to disk. Default: False (cache is enabled).'
+        help='Disables caching of processed data to disk.'
     )
     parser.add_argument(
         '--cache-ttl',
         type=int,
         default=DEFAULT_CACHE_TTL_SECONDS,
-        help=f'Cache Time To Live in seconds. This defines how long a processed file is considered "fresh" and used directly without re-scraping HTML. Default: {DEFAULT_CACHE_TTL_SECONDS // 3600} hours.'
+        help=f'Cache Time To Live in seconds. This defines how long a processed file is considered "fresh" and used directly without re-scraping HTML.\nDefault: {DEFAULT_CACHE_TTL_SECONDS} ({DEFAULT_CACHE_TTL_SECONDS // 3600} hours)'
     )
     parser.add_argument(
         '--cache-validation-tolerance',
         type=int,
         default=DEFAULT_CACHE_VALIDATION_TOLERANCE,
-        help=f'Tolerance in bytes for content-length comparison when ETag/Last-Modified fails to return 304. Default: {DEFAULT_CACHE_VALIDATION_TOLERANCE} bytes.'
+        help=f'Tolerance in bytes for content-length comparison when ETag/Last-Modified fails to return 304.\nDefault: {DEFAULT_CACHE_VALIDATION_TOLERANCE}'
     )
     parser.add_argument(
         '--cache-keep',
         action='store_true',
         dest='keep_past_cache',
-        help='If set, cache files for past days will NOT be automatically deleted. By default, past days\' cache files are deleted.'
+        help='If set, cache files for past days will NOT be automatically deleted.\nBy default, past days\' cache files are deleted.'
     )
     parser.add_argument(
         '--cache-blind-read',
         action='store_true',
         default=DEFAULT_CACHE_BLIND_READ,
         dest='cache_blind_read',
-        help='If set, cached data will be used directly without re-validation if present. This bypasses freshness checks and conditional GET requests for cached content.'
+        help='If set, cached data will be used directly without re-validation if present.\nThis bypasses freshness checks and conditional GET requests for cached content.'
     )
 
     parser.add_argument(
         '--max-workers',
         type=int,
         default=DEFAULT_MAX_WORKERS,
-        help=f'Maximum number of concurrent workers for data fetching. Default: {DEFAULT_MAX_WORKERS}.'
+        help=f'Maximum number of concurrent workers for data fetching.\nDefault: {DEFAULT_MAX_WORKERS}'
     )
     parser.add_argument(
         '--max-retries',
         type=int,
         default=DEFAULT_MAX_RETRIES,
-        help=f'Maximum number of retries for failed HTTP requests (e.g., 429, 5xx, connection errors). Default: {DEFAULT_MAX_RETRIES}.'
+        help=f'Maximum number of retries for failed HTTP requests (e.g., 429, 5xx, connection errors).\nDefault: {DEFAULT_MAX_RETRIES}'
     )
     parser.add_argument(
         '--min-request-delay',
         type=float,
         default=DEFAULT_MIN_REQUEST_DELAY,
-        help=f'Minimum delay in seconds between HTTP requests. Applies only to live fetches. Default: {DEFAULT_MIN_REQUEST_DELAY}s.'
+        help=f'Minimum delay in seconds between HTTP requests. Applies only to live fetches.\nDefault: {DEFAULT_MIN_REQUEST_DELAY}'
     )
     parser.add_argument(
         '--max-concurrent-requests',
         type=int,
         default=DEFAULT_MAX_CONCURRENT_REQUESTS,
-        help=f'Maximum number of concurrent HTTP requests allowed. This acts as a global rate limiter. Default: {DEFAULT_MAX_CONCURRENT_REQUESTS}.'
+        help=f'Maximum number of concurrent HTTP requests allowed. This acts as a global rate limiter.\nDefault: {DEFAULT_MAX_CONCURRENT_REQUESTS}'
     )
     parser.add_argument(
         '--max-schedule-retries',
         type=int,
         default=DEFAULT_MAX_SCHEDULE_RETRIES,
-        help=f'Maximum number of retries for application-level errors during schedule parsing/generation. Default: {DEFAULT_MAX_SCHEDULE_RETRIES}.'
+        help=f'Maximum number of retries for application-level errors during schedule parsing/generation.\nDefault: {DEFAULT_MAX_SCHEDULE_RETRIES}'
     )
     parser.add_argument(
         '--timeout-http',
         type=int,
         default=DEFAULT_HTTP_TIMEOUT,
-        help=f'Timeout in seconds for all HTTP requests (GET, HEAD). Default: {DEFAULT_HTTP_TIMEOUT}s.'
+        help=f'Timeout in seconds for all HTTP requests (GET, HEAD).\nDefault: {DEFAULT_HTTP_TIMEOUT}'
     )
 
     args = parser.parse_args()

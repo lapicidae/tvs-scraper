@@ -90,7 +90,7 @@ The scraper is controlled via the command line with various arguments.
 
 ### Important Options
 
-* `--list-channels`: Lists all available channel IDs and their names, then exits. Useful for configuring `channelmap.conf`.
+* `--list-channels`: Lists all available channel IDs and their names.
 
 * `--channel-ids <IDS>`: A comma-separated list of channel IDs (e.g., `"ARD,ZDF"`). If not provided, all channels are scraped.
 
@@ -100,7 +100,7 @@ The scraper is controlled via the command line with various arguments.
 
 * `--days <NUMBER>`: Number of days to scrape (1-14). Default: `1`. Ignored if `--date` is specified.
 
-* `--output-file <FILE>`: Path to the output file. The file extension (`.json` or `.xml`) will be automatically added if not present. Default: `tvspielfilm`.
+* `--output-file <FILE>`: Output file to which the collected data is written. The default output path is the current working directory. Default: `tvspielfilm.xml`.
 
 * `--output-format <FORMAT>`: Output format: `"xmltv"` or `"json"`. Default: `xmltv`.
 
@@ -108,7 +108,7 @@ The scraper is controlled via the command line with various arguments.
 
 * `--img-size <SIZE>`: Image size to extract (`"150"`, `"300"` or `"600"`). Default: `600`.
 
-* `--img-check`: If set, performs an additional HEAD request to check if image URLs are valid. Increases scraping time.
+* `--img-check`: The validity of the image URLs will be checked. Increases scraping time.
 
 * `--log-level <LEVEL>`: Sets the logging level (`DEBUG`, `INFO`, `WARNING`, `ERROR`, `CRITICAL`). Default: `WARNING`.
 
