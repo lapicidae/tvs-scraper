@@ -169,6 +169,22 @@ fi
 
 log_message 'Days to Scrape: %s' "$days"
 
+# Extract 'DaysToUpdate' value
+declare -i daysUpdate
+
+confDaysToUpdate=$(grep -E '^[[:space:]]*DaysToUpdate[[:space:]]*=' "$epgdConf" | \
+				 	 sed -E 's/^[[:space:]]*DaysToUpdate[[:space:]]*=[[:space:]]*([0-9]+).*$/\1/' | \
+				 	 tail -n 1) || true
+
+if [[ -z "$confDaysToUpdate" || ! "$confDaysToUpdate" =~ ^[0-9]+$ ]]; then
+	daysUpdate=2
+	# log_message 'WARNING: DaysToUpdate in %s is not a valid number or not found. Using default of %s." "$epgdConf" "$daysUpdate" >&2
+else
+	daysUpdate="$confDaysToUpdate"
+fi
+
+log_message 'Days to Update: %s' "$daysUpdate"
+
 # Extract 'UpdateTime' value
 declare -i UpdateTime
 
@@ -235,9 +251,9 @@ if [ "$updateNeeded" = true ]; then
 	if [ -n "$joinedChannelIDs" ]; then
 		log_message 'Executing tvs-scraper for IDs: %s' "${joinedChannelIDs}"
 		if [ "$syslogEnable" = true ]; then
-			"$tvsScraperPath" --channel-ids "${joinedChannelIDs}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-syslog --log-syslog-tag "${syslogIdent}" --log-level "${logLevel}" "${extraScriptArgs[@]}"
+			"$tvsScraperPath" --channel-ids "${joinedChannelIDs}" --output-format xmltv --days "${days}" --days-update "${daysUpdate}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-syslog --log-syslog-tag "${syslogIdent}" --log-level "${logLevel}" "${extraScriptArgs[@]}"
 		else
-			"$tvsScraperPath" --channel-ids "${joinedChannelIDs}" --output-format xmltv --days "${days}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-level "${logLevel}" "${extraScriptArgs[@]}"
+			"$tvsScraperPath" --channel-ids "${joinedChannelIDs}" --output-format xmltv --days "${days}" --days-update "${daysUpdate}" --output-file "${outFile}" --cache-dir "${cacheDir}" --log-level "${logLevel}" "${extraScriptArgs[@]}"
 		fi
 	else
 		log_message 'No XMLTV channel IDs found in "%s". tvs-scraper will not be executed.' "$chMap"

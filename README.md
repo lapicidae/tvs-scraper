@@ -100,6 +100,8 @@ The scraper is controlled via the command line with various arguments.
 
 * `--days <NUMBER>`: Number of days to scrape (1-14). Default: `1`. Ignored if `--date` is specified.
 
+* `--days-update`: Number of days (starting from today) for which the data will be updated (TTL respected). The rest will be used from cache as-is (blind read, no re-validation). Default: `2`
+
 * `--output-file <FILE>`: Output file to which the collected data is written. The default output path is the current working directory. Default: `tvspielfilm.xml`.
 
 * `--output-format <FORMAT>`: Output format: `"xmltv"` or `"json"`. Default: `xmltv`.
@@ -129,8 +131,6 @@ The scraper is controlled via the command line with various arguments.
 * `--cache-validation-tolerance <BYTES>`: Tolerance in bytes for content-length comparison when ETag/Last-Modified fails to return 304. Default: `5` bytes.
 
 * `--cache-keep`: If set, cache files for past days will NOT be automatically deleted. By default, past days' cache files are deleted.
-
-* `--cache-blind-read`: If set, cached data will be used directly without re-validation if present. This bypasses freshness checks and conditional GET requests for cached content.
 
 * `--max-workers <NUMBER>`: Maximum number of concurrent workers for data fetching. Default: `10`.
 

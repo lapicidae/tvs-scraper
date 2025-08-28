@@ -100,6 +100,8 @@ Der Scraper wird über die Kommandozeile mit verschiedenen Argumenten gesteuert.
 
 * `--days <ANZAHL>`: Anzahl der Tage, die gescrapt werden sollen (1-14). Standard: `1`. Dieses Argument wird ignoriert, wenn `--date` angegeben ist.
 
+* `--days-update`: Anzahl der Tage (ab heute), für die die Daten aktualisiert werden (TTL wird eingehalten). Der Rest wird unverändert aus dem Cache verwendet (keine erneute Validierung). Standard: `2`
+
 * `--output-file <DATEI>`: Ausgabedatei, in die die gesammelten Daten geschrieben werden. Der Standardausgabepfad ist das aktuelle Arbeitsverzeichnis. Standard: `tvspielfilm.xml`.
 
 * `--output-format <FORMAT>`: Ausgabeformat: `"xmltv"` oder `"json"`. Standard: `xmltv`.
@@ -129,8 +131,6 @@ Der Scraper wird über die Kommandozeile mit verschiedenen Argumenten gesteuert.
 * `--cache-validation-tolerance <BYTES>`: Toleranz in Bytes für den `Content-Length`-Vergleich, wenn ETag/Last-Modified keine 304-Antwort liefert. Standard: `5` Bytes.
 
 * `--cache-keep`: Wenn gesetzt, werden Cache-Dateien für vergangene Tage NICHT automatisch gelöscht. Standardmäßig werden Cache-Dateien vergangener Tage gelöscht.
-
-* `--cache-blind-read`: Wenn gesetzt, werden Daten aus dem Cache direkt verwendet, ohne erneut überprüft zu werden, sofern sie vorhanden sind. Dadurch werden Aktualitätsprüfungen und bedingte GET-Anfragen für zwischengespeicherte Inhalte umgangen.
 
 * `--max-workers <ANZAHL>`: Maximale Anzahl gleichzeitiger Worker für das Abrufen von Daten. Standard: `10`.
 

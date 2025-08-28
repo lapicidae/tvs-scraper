@@ -45,12 +45,12 @@ DEFAULT_DAYS: int = 1
 DEFAULT_IMAGE_SIZE: str = "600"
 DEFAULT_IMAGE_CHECK: bool = False
 MAX_DAYS_TO_SCRAPE: int = 14
+DEFAULT_DAYS_TO_UPDATE: int = 2
 
 DEFAULT_CACHE_SUBDIRECTORY: str = "tvs-scraper"
 DEFAULT_CACHE_DISABLE: bool = False
 DEFAULT_CACHE_TTL_SECONDS: int = 24 * 60 * 60 # 24 hours
 CACHE_CHANNEL_LIST_FILE: str = "channels.json"
-DEFAULT_CACHE_BLIND_READ: bool = False
 
 DEFAULT_MAX_WORKERS: int = 10
 DEFAULT_MAX_RETRIES: int = 5
@@ -849,7 +849,7 @@ class TvsLeanScraper:
                  keep_past_cache: bool = False, cache_clear: bool = False, xmltv_timezone: Optional[str] = None,
                  cache_validation_tolerance: int = DEFAULT_CACHE_VALIDATION_TOLERANCE,
                  http_timeout: int = DEFAULT_HTTP_TIMEOUT,
-                 cache_blind_read: bool = DEFAULT_CACHE_BLIND_READ):
+                 days_to_update: int = DEFAULT_DAYS_TO_UPDATE):
         """
         Initializes the TvsLeanScraper instance.
 
@@ -892,8 +892,8 @@ class TvsLeanScraper:
         :type cache_validation_tolerance: int
         :param http_timeout: Timeout for HTTP requests in seconds.
         :type http_timeout: int
-        :param cache_blind_read: If True, cached data is used directly without re-validation if present.
-        :type cache_blind_read: bool
+        :param days_to_update: Number of days (from today) for which the cache will be forced to update, rest will be taken as-is from cache.
+        :type days_to_update: int
         :raises SystemExit: If the specified cache path exists but is not a directory.
         """
         self.target_sourceids: Optional[set[str]] = None
@@ -982,7 +982,7 @@ class TvsLeanScraper:
         self.cache_clear_requested: bool = cache_clear
         self.cache_validation_tolerance: int = cache_validation_tolerance
         self.http_timeout: int = http_timeout
-        self.cache_blind_read: bool = cache_blind_read
+        self.days_to_update = days_to_update
 
         if self.enable_cache:
             os.makedirs(self.processed_data_cache_base_dir, exist_ok=True)
@@ -993,8 +993,6 @@ class TvsLeanScraper:
                 logger.debug("Keeping past days' cache files is ENABLED (--keep-past-cache).")
             else:
                 logger.debug("Deleting past days' cache files is ENABLED by default (no --keep-past-cache).")
-            if self.cache_blind_read:
-                logger.info("Cache blind read (--cache-blind-read) is ENABLED. Cached data will be used directly if present, bypassing re-validation.")
         else:
             logger.debug("Processed data cache disabled.")
 
@@ -1321,7 +1319,6 @@ class TvsLeanScraper:
         """
         Fetches and parses the list of channels from TVSpielfilm.de.
         Utilizes caching with ETag/Last-Modified for efficient fetching.
-        If --cache-blind-read is enabled, it uses cached data directly without re-validation.
 
         :returns: A list of dictionaries, each containing 'name', 'url', and 'source_id' for a channel.
         :rtype: List[Dict[str, str]]
@@ -1354,11 +1351,7 @@ class TvsLeanScraper:
 
                 is_cache_fresh = self._is_cache_fresh(cached_at_str)
 
-                if self.cache_blind_read and cached_channels_list is not None:
-                    channels = cached_channels_list
-                    logger.info("Using channel list from cache (blind read enabled). Bypassing re-validation.")
-                    return channels
-                elif is_cache_fresh and cached_channels_list is not None:
+                if is_cache_fresh and cached_channels_list is not None:
                     channels = cached_channels_list
                     logger.debug("Using fresh channel list from cache.")
                     return channels
@@ -1588,8 +1581,6 @@ class TvsLeanScraper:
         """
         Combines detail page parsing and image head check into a single threaded task.
         Performs conditional GET for the detail page.
-        This function now respects the cache_ttl for detail pages directly, or bypasses re-validation
-        if --cache-blind-read is enabled.
 
         :param detail_url: The URL of the program's detail page.
         :type detail_url: str
@@ -1622,11 +1613,8 @@ class TvsLeanScraper:
         detail_data['image_check_final_url'] = None
         detail_data['image_check_status'] = "N/A"
 
-        if self.enable_cache and not self.cache_clear_requested and (self.cache_blind_read or is_detail_cache_fresh):
-            if self.cache_blind_read and detail_cached_at_str is not None:
-                logger.debug(f"Detail page for {item_id_for_log} is present in cache (blind read enabled). Using existing detail data.")
-            elif is_detail_cache_fresh:
-                logger.debug(f"Detail page for {item_id_for_log} is fresh in cache. Using existing detail data.")
+        if self.enable_cache and not self.cache_clear_requested and is_detail_cache_fresh:
+           logger.debug(f"Detail page for {item_id_for_log} is fresh in cache. Using existing detail data.")
         else:
             if detail_cached_at_str is None:
                 logger.debug(f"No detail cache metadata found for {item_id_for_log}. Performing initial fetch.")
@@ -1662,15 +1650,32 @@ class TvsLeanScraper:
 
         return detail_data, new_detail_etag, new_detail_last_modified, new_detail_content_length
 
+    def set_days_to_update(self, n_days: int):
+        """
+        Set the number of days for which the cache will be forced to update.
+
+        :param n_days: Number of days (from today) which are forced to be updated, the rest will be taken as-is from cache.
+        :type n_days: int
+        """
+        self.days_to_update = n_days
+
+    def _should_force_update(self, current_date: datetime.date) -> bool:
+        """
+        Decide if the program for the given date should be forced to update from web (with cache TTL check).
+
+        :param current_date: The date to check.
+        :type current_date: datetime.date
+        :returns: True if the day is in the force update window, False otherwise.
+        :rtype: bool
+        """
+        delta = (current_date - self.start_date).days
+        return 0 <= delta < self.days_to_update
 
     def _process_channel_day_schedule(self, channel_info: Dict[str, str], current_date: datetime.date) -> List[Dict[str, Any]]:
         """
         Fetches and parses a day's schedule for a channel, with retry logic for
         application-level exceptions during schedule parsing.
-        It prioritizes fresh data from the local JSON cache. If stale or missing,
-        it performs a conditional HTTP GET to check for updates. If cached data's
-        timezone differs from requested, it reprocesses timestamps.
-        If --cache-blind-read is enabled, it uses cached data directly without re-validation.
+        Implements forced data update for the first 'days_to_update' and blind cache read for the rest.
 
         :param channel_info: Dictionary containing channel information ('name', 'url', 'source_id').
         :type channel_info: Dict[str, str]
@@ -1689,11 +1694,11 @@ class TvsLeanScraper:
 
         items_for_day: List[Dict[str, Any]] = []
         processed_items: List[Dict[str, Any]] = []
-        
+
         new_etag: Optional[str] = None
         new_last_modified: Optional[str] = None
         fetched_content_length: Optional[int] = None
-        
+
         original_cached_at_str: Optional[str] = None
 
         cached_data_from_file: Optional[Dict[str, Any]] = None
@@ -1705,6 +1710,7 @@ class TvsLeanScraper:
         is_cache_fresh: bool = False
         should_save_cache: bool = False
 
+        force_update = self._should_force_update(current_date)
 
         if self.enable_cache and not self.cache_clear_requested:
             filepath = self._get_cache_filepath('daily_schedule', channel_id=channel_source_id, date=current_date)
@@ -1726,98 +1732,92 @@ class TvsLeanScraper:
 
                 is_cache_fresh = self._is_cache_fresh(original_cached_at_str)
 
-                if self.cache_blind_read and cached_data is not None:
+                # Blind cache read for dates after the force update window
+                if not force_update and cached_data is not None:
+                    logger.debug(f"Using stale cache for {channel_name} on {current_date.strftime('%Y-%m-%d')} (blind read, no re-validation).")
                     items_for_day = cached_data
-                    logger.info(f"Using schedule for {channel_name} on {current_date.strftime('%Y-%m-%d')} from cache (blind read enabled). Bypassing re-validation.")
-                    if cached_xmltv_timezone != self.xmltv_timezone:
-                        logger.info(f"Cached data for {channel_name} on {current_date.strftime('%Y-%m-%d')} has different timezone (cached: {cached_xmltv_timezone}, requested: {self.xmltv_timezone}). Reprocessing timestamps.")
-                        should_save_cache = True
-                elif is_cache_fresh and cached_data is not None:
+                    return items_for_day
+
+                if force_update and is_cache_fresh and cached_data is not None:
                     if cached_xmltv_timezone == self.xmltv_timezone:
                         items_for_day = cached_data
                         logger.debug(f"Using fresh data from cache for {channel_name} on {current_date.strftime('%Y-%m-%d')}.")
+                        return items_for_day
                     else:
-                        logger.info(f"Cached data for {channel_name} on {current_date.strftime('%Y-%m-%d')} is fresh but timezone differs (cached: {cached_xmltv_timezone}, requested: {self.xmltv_timezone}). Reprocessing timestamps.")
+                        logger.debug(f"Cached data for {channel_name} on {current_date.strftime('%Y-%m-%d')} is fresh but timezone differs (cached: {cached_xmltv_timezone}, requested: {self.xmltv_timezone}). Reprocessing timestamps.")
                         items_for_day = cached_data
                         should_save_cache = True
-                elif cached_data is not None:
-                    logger.debug("Channel list cache is stale. Attempting conditional fetch.")
-                else:
-                    logger.debug("Channel list cache found but data is malformed. Performing full fetch.")
             else:
-                logger.debug("Channel list cache not found or unreadable. Performing full fetch.")
-        else:
-            if self.cache_clear_requested:
-                logger.debug(f"Cache clear requested. Bypassing cache load for {channel_name} on {current_date.strftime('%Y-%m-%d')}.")
-            elif not self.enable_cache:
-                logger.debug(f"Cache disabled. Bypassing cache load for {channel_name} on {current_date.strftime('%Y-%m-%d')}.")
+                logger.debug("Channel day cache not found or unreadable. Performing full fetch.")
 
-        if not items_for_day or (not self.cache_blind_read and not is_cache_fresh):
-            schedule_url: str = self._build_schedule_url(channel_url, current_date)
-            for attempt in range(self.max_schedule_retries + 1):
-                if self.stop_event.is_set():
-                    logger.debug(f"Stop event set. Aborting schedule fetch attempts for {channel_name} on {current_date.strftime('%Y-%m-%d')}.")
-                    return []
-                try:
-                    attempt_str: str = f" (Attempt {attempt + 1}/{self.max_schedule_retries + 1})" if attempt > 0 else ""
-                    logger.debug(f"Attempting to fetch schedule for {channel_name} on {current_date.strftime('%Y-%m-%d')} from {schedule_url}{attempt_str}")
+        if not items_for_day:
+            # Only perform a fetch if in force update window
+            if force_update:
+                schedule_url: str = self._build_schedule_url(channel_url, current_date)
+                for attempt in range(self.max_schedule_retries + 1):
+                    if self.stop_event.is_set():
+                        logger.debug(f"Stop event set. Aborting schedule fetch attempts for {channel_name} on {current_date.strftime('%Y-%m-%d')}.")
+                        return []
+                    try:
+                        attempt_str: str = f" (Attempt {attempt + 1}/{self.max_schedule_retries + 1})" if attempt > 0 else ""
+                        logger.debug(f"Attempting to fetch schedule for {channel_name} on {current_date.strftime('%Y-%m-%d')} from {schedule_url}{attempt_str}")
 
-                    response_content, temp_new_etag, temp_new_last_modified, temp_fetched_content_length_from_fetch = self.fetch_url(
-                        schedule_url,
-                        etag=cached_etag,
-                        last_modified=cached_last_modified,
-                        cached_content_length=cached_content_length
-                    )
-
-                    if response_content is not None:
-                        logger.debug(f"HTML content for {channel_name} on {current_date.strftime('%Y-%m-%d')} was modified or fetched for the first time. Parsing new data.")
-                        items_for_day = self.html_parser.parse_daily_schedule_items(
-                            response_content,
-                            channel_info,
-                            current_date
+                        response_content, temp_new_etag, temp_new_last_modified, temp_fetched_content_length_from_fetch = self.fetch_url(
+                            schedule_url,
+                            etag=cached_etag,
+                            last_modified=cached_last_modified,
+                            cached_content_length=cached_content_length
                         )
-                        for item_data in items_for_day:
-                            item_data.update({
-                                'detail_etag': None,
-                                'detail_last_modified': None,
-                                'detail_content_length': None,
-                                'detail_cached_at': None,
-                                'image_check_final_url': None,
-                                'image_check_status': None
-                            })
-                        should_save_cache = True
-                        new_etag = temp_new_etag
-                        new_last_modified = temp_new_last_modified
-                        fetched_content_length = temp_fetched_content_length_from_fetch
-                        break
-                    elif cached_data is not None:
-                        logger.debug(f"HTML content for {channel_name} on {current_date.strftime('%Y-%m-%d')} not modified (304) or semantically identical. Using stale cache.")
-                        items_for_day = cached_data.copy()
-                        for item_data in items_for_day:
-                            detail_cached_at_str = item_data.get('detail_cached_at')
-                            if not self.cache_blind_read and not self._is_cache_fresh(detail_cached_at_str):
-                                logger.debug(f"Detail cache for '{item_data.get('title', 'N/A')}' is stale. Forcing re-fetch.")
-                                item_data['detail_cached_at'] = None
-                                should_save_cache = True
-                        break
-                    else:
-                        logger.warning(f"Could not retrieve or parse program for {channel_name} on {current_date.strftime('%Y-%m-%d')}. No data available. Retrying...")
+
+                        if response_content is not None:
+                            logger.debug(f"HTML content for {channel_name} on {current_date.strftime('%Y-%m-%d')} was modified or fetched for the first time. Parsing new data.")
+                            items_for_day = self.html_parser.parse_daily_schedule_items(
+                                response_content,
+                                channel_info,
+                                current_date
+                            )
+                            for item_data in items_for_day:
+                                item_data.update({
+                                    'detail_etag': None,
+                                    'detail_last_modified': None,
+                                    'detail_content_length': None,
+                                    'detail_cached_at': None,
+                                    'image_check_final_url': None,
+                                    'image_check_status': None
+                                })
+                            should_save_cache = True
+                            new_etag = temp_new_etag
+                            new_last_modified = temp_new_last_modified
+                            fetched_content_length = temp_fetched_content_length_from_fetch
+                            break
+                        elif cached_data is not None:
+                            logger.debug(f"HTML content for {channel_name} on {current_date.strftime('%Y-%m-%d')} not modified (304) or semantically identical. Using stale cache.")
+                            items_for_day = cached_data.copy()
+                            for item_data in items_for_day:
+                                detail_cached_at_str = item_data.get('detail_cached_at')
+                                if not self._is_cache_fresh(detail_cached_at_str):
+                                    logger.debug(f"Detail cache for '{item_data.get('title', 'N/A')}' is stale. Forcing re-fetch.")
+                                    item_data['detail_cached_at'] = None
+                                    should_save_cache = True
+                            break
+                        else:
+                            logger.warning(f"Could not retrieve or parse program for {channel_name} on {current_date.strftime('%Y-%m-%d')}. No data available. Retrying...")
+                            if attempt < self.max_schedule_retries:
+                                time.sleep(1 * (attempt + 1))
+                            else:
+                                logger.error(f"Max retries ({self.max_schedule_retries}) exhausted for schedule generation for {channel_name} on {current_date.strftime('%Y-%m-%d')}. Skipping this day.")
+                                return []
+                    except KeyboardInterrupt:
+                        self.stop_event.set()
+                        logger.info(f"KeyboardInterrupt caught in worker for {channel_name} on {current_date.strftime('%Y-%m-%d')}. Signaling main thread to stop.")
+                        raise
+                    except Exception as exc:
+                        logger.error(f"Schedule generation for {channel_name} on {current_date.strftime('%Y-%m-%d')} generated an exception on attempt {attempt + 1}: {exc}", exc_info=True)
                         if attempt < self.max_schedule_retries:
                             time.sleep(1 * (attempt + 1))
                         else:
                             logger.error(f"Max retries ({self.max_schedule_retries}) exhausted for schedule generation for {channel_name} on {current_date.strftime('%Y-%m-%d')}. Skipping this day.")
                             return []
-                except KeyboardInterrupt:
-                    self.stop_event.set()
-                    logger.info(f"KeyboardInterrupt caught in worker for {channel_name} on {current_date.strftime('%Y-%m-%d')}. Signaling main thread to stop.")
-                    raise
-                except Exception as exc:
-                    logger.error(f"Schedule generation for {channel_name} on {current_date.strftime('%Y-%m-%d')} generated an exception on attempt {attempt + 1}: {exc}", exc_info=True)
-                    if attempt < self.max_schedule_retries:
-                        time.sleep(1 * (attempt + 1))
-                    else:
-                        logger.error(f"Max retries ({self.max_schedule_retries}) exhausted for schedule generation for {channel_name} on {current_date.strftime('%Y-%m-%d')}. Skipping this day.")
-                        return []
 
         if self.stop_event.is_set():
             return []
@@ -1834,16 +1834,12 @@ class TvsLeanScraper:
                 if item_data.get('link'):
                     if not self.enable_cache or self.cache_clear_requested:
                         needs_detail_fetch = True
-                    elif self.cache_blind_read and item_data.get('detail_cached_at') is None:
-                        needs_detail_fetch = True
-                    elif not self.cache_blind_read and not self._is_cache_fresh(item_data.get('detail_cached_at')):
+                    elif force_update and not self._is_cache_fresh(item_data.get('detail_cached_at')):
                         needs_detail_fetch = True
 
                 needs_image_check_standalone = False
                 if self.check_image and item_data.get('image_url') and not needs_detail_fetch:
-                    if self.cache_blind_read and item_data.get('image_check_status') not in ['avail', 'redirect']:
-                        needs_image_check_standalone = True
-                    elif not self.cache_blind_read and item_data.get('image_check_status') != 'avail':
+                    if force_update and item_data.get('image_check_status') != 'avail':
                         needs_image_check_standalone = True
 
                 if needs_detail_fetch:
@@ -1874,7 +1870,7 @@ class TvsLeanScraper:
                         index = detail_futures[future]
                         detailed_data, _, _, _ = future.result()
                         items_for_day[index].update(detailed_data)
-                        should_save_cache = True 
+                        should_save_cache = True
                     elif future in image_check_futures:
                         index = image_check_futures[future]
                         checked_url, status = future.result()
@@ -1889,7 +1885,6 @@ class TvsLeanScraper:
                     index_for_log = detail_futures.get(future) or image_check_futures.get(future)
                     item_title = items_for_day[index_for_log].get('title', 'N/A') if index_for_log is not None else 'N/A'
                     logger.error(f"Error processing item {item_title} on {current_date.strftime('%Y-%m-%d')}: {exc}", exc_info=True)
-
 
         for item_data in items_for_day:
             if self.stop_event.is_set():
@@ -2429,9 +2424,6 @@ Examples:
 
   Scrape program for today and output XMLTV with Europe/Berlin timezone:
     python3 tvs-scraper.py --xmltv-timezone Europe/Berlin
-
-  Use cached data directly without re-validation if available:
-    python3 tvs-scraper.py --cache-blind-read
 """
     )
 
@@ -2462,6 +2454,12 @@ Examples:
         type=validate_days,
         default=DEFAULT_DAYS,
         help=f'Number of days to scrape (1-{MAX_DAYS_TO_SCRAPE}).\nIgnored if --date is specified.\nDefault: {DEFAULT_DAYS}'
+    )
+    parser.add_argument(
+        '--days-update',
+        type=int,
+        default=DEFAULT_DAYS_TO_UPDATE,
+        help=f'Number of days (starting from today) for which the data will be updated (TTL respected).\nThe rest will be used from cache as-is (blind read, no re-validation).\nDefault: {DEFAULT_DAYS_TO_UPDATE}'
     )
 
     parser.add_argument(
@@ -2559,13 +2557,6 @@ Examples:
         action='store_true',
         dest='keep_past_cache',
         help='If set, cache files for past days will NOT be automatically deleted.\nBy default, past days\' cache files are deleted.'
-    )
-    parser.add_argument(
-        '--cache-blind-read',
-        action='store_true',
-        default=DEFAULT_CACHE_BLIND_READ,
-        dest='cache_blind_read',
-        help='If set, cached data will be used directly without re-validation if present.\nThis bypasses freshness checks and conditional GET requests for cached content.'
     )
 
     parser.add_argument(
@@ -2673,7 +2664,7 @@ Examples:
         xmltv_timezone=args.xmltv_timezone,
         cache_validation_tolerance=args.cache_validation_tolerance,
         http_timeout=args.timeout_http,
-        cache_blind_read=args.cache_blind_read
+        days_to_update=args.days_update
     )
 
     if args.list_channels:
