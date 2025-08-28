@@ -603,7 +603,7 @@ class TvsHtmlParser:
 
     def _extract_crew_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any], detail_sections: Dict[str, Optional[lxml.html.HtmlElement]]) -> None:
         """
-        Extracts crew information (director, screenplay, camera) from the HTML root.
+        Extracts crew information (camera, director, music, screenplay) from the HTML root.
 
         :param root: The lxml HTML root element.
         :type root: lxml.html.HtmlElement
@@ -614,11 +614,12 @@ class TvsHtmlParser:
         """
         crew_dl = detail_sections.get('Crew')
         if crew_dl is not None:
-            # Handle 'Regie', 'Kamera', and 'Drehbuch' to prevent duplicates by using a set
+            # Handle 'Drehbuch', 'Kamera', 'Musik' and 'Regie' to prevent duplicates by using a set
             crew_values = {
-                'Regie': set(),
+                'Drehbuch': set(),
                 'Kamera': set(),
-                'Drehbuch': set()
+                'Musik': set(),
+                'Regie': set()
             }
             
             dt_elements: List[lxml.html.HtmlElement] = self.selector_dt(crew_dl)
@@ -632,20 +633,25 @@ class TvsHtmlParser:
                 if sanitized_dd_text and dt_text in crew_values:
                     crew_values[dt_text].add(sanitized_dd_text)
             
-            if crew_values['Regie']:
-                detail_data['director'] = ", ".join(sorted(list(crew_values['Regie'])))
-            else:
-                detail_data['director'] = None
-            
-            if crew_values['Kamera']:
-                detail_data['camera'] = ", ".join(sorted(list(crew_values['Kamera'])))
-            else:
-                detail_data['camera'] = None
-                
             if crew_values['Drehbuch']:
                 detail_data['screenplay'] = ", ".join(sorted(list(crew_values['Drehbuch'])))
             else:
                 detail_data['screenplay'] = None
+
+            if crew_values['Kamera']:
+                detail_data['camera'] = ", ".join(sorted(list(crew_values['Kamera'])))
+            else:
+                detail_data['camera'] = None
+
+            if crew_values['Musik']:
+                detail_data['music'] = ", ".join(sorted(list(crew_values['Musik'])))
+            else:
+                detail_data['music'] = None
+
+            if crew_values['Regie']:
+                detail_data['director'] = ", ".join(sorted(list(crew_values['Regie'])))
+            else:
+                detail_data['director'] = None
 
     def _extract_rating_info(self, root: lxml.html.HtmlElement, detail_data: Dict[str, Any]) -> None:
         """
@@ -824,24 +830,14 @@ class TvsLeanScraper:
     extracting detailed program information, and managing caching and retries.
     """
     _DETAIL_DATA_TEMPLATE: Dict[str, Any] = {
-        'shortdescription': None, 'longdescription': None, 'genre': None,
-        'original_title': None, 'country': None, 'year': None, 'duration': None,
-        'parentalrating': None, 'cast': None, 'director': None, 'screenplay': None,
-        'camera': None, 'numrating': None, 'rating': None, 'txtrating': None,
-        'imdbrating': None, 'keyword': None,
-        'subtitle': None,
-        'episode_num': None,
-        'season_num': None,
-        'presenter': [],
-        'commentator': [],
-        'guest': [],
-        'tipp': None,
-        'detail_etag': None,
-        'detail_last_modified': None,
-        'detail_content_length': None,
-        'detail_cached_at': None,
-        'image_check_final_url': None,
-        'image_check_status': None
+        'original_title': None, 'subtitle': None, 'shortdescription': None, 'longdescription': None,
+        'genre': None, 'country': None, 'year': None, 'duration': None,
+        'parentalrating': None, 'imdb_rating': None, 'numrating': None, 'txtrating': None,
+        'director': None, 'screenplay': None, 'cast': None, 'music': None,
+        'camera': None, 'presenter': [], 'commentator': [], 'guest': [],
+        'keyword': None, 'tipp': None, 'episode_num': None, 'season_num': None,
+        'detail_etag': None, 'detail_last_modified': None, 'detail_content_length': None, 'detail_cached_at': None,
+        'image_check_final_url': None, 'image_check_status': None
     }
 
     def __init__(self, channel_ids: Optional[str] = None, days: Optional[int] = None, image_size: Optional[str] = None, check_image: Optional[bool] = None, start_date_obj: Optional[datetime.date] = None,
@@ -2249,6 +2245,12 @@ def generate_xmltv(data_list: List[Dict[str, Any]], output_file: str, xmltv_time
                 for writer in writers:
                     writer_elem = lxml.etree.SubElement(credits_elem, 'writer')
                     writer_elem.text = writer
+
+            if item.get('music'):
+                composers: List[str] = [w.strip() for w in item['music'].split(',') if w.strip()]
+                for composer in composers:
+                    composer_elem = lxml.etree.SubElement(credits_elem, 'composer')
+                    composer_elem.text = composer
 
             if item.get('presenter'):
                 for presenter_name in item['presenter']:
