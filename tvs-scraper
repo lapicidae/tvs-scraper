@@ -58,7 +58,9 @@ RETRY_STATUS_FORCELIST: List[int] = [429, 500, 502, 503, 504]
 RETRY_BACKOFF_FACTOR: float = 1.0
 
 DEFAULT_OUTPUT_FORMAT: str = 'xmltv'
+DEFAULT_OUTPUT_FILE: str = 'tvspielfilm'
 DEFAULT_SYSLOG_TAG: str = 'tvs-scraper'
+DEFAULT_TIMEZONE: str = 'Europe/Berlin'
 DEFAULT_MIN_REQUEST_DELAY: float = 0.05
 DEFAULT_MAX_CONCURRENT_REQUESTS: int = 15
 DEFAULT_MAX_SCHEDULE_RETRIES: int = 3
@@ -85,6 +87,19 @@ re_cast_entry_match = re.compile(r'(.+?)\s*\((.+?)\)')
 _INVALID_XML_CHARS_PATTERN = re.compile(
     '[\x00-\x08\x0B\x0C\x0E-\x1F\x7F-\x9F\uFDD0-\uFDEF\uFFFE\uFFFF]'
 )
+
+def _get_default_output_path(output_format=None):
+    """
+    Returns the default output path for the output file, depending on the output format.
+
+    :param output_format: Optional; the desired output format ("xmltv" or "json"). If None, DEFAULT_OUTPUT_FORMAT is used.
+    :type output_format: str or None
+    :returns: The absolute path to the default output file with the appropriate extension (".xml" or ".json").
+    :rtype: str
+    """
+    ext = '.xml' if (output_format or DEFAULT_OUTPUT_FORMAT) == 'xmltv' else '.json'
+    return os.path.join(os.getcwd(), f"{DEFAULT_OUTPUT_FILE}{ext}")
+
 
 def _sanitize_xml_string(text: Optional[str]) -> Optional[str]:
     """
@@ -2395,8 +2410,6 @@ def validate_date(date_str: str) -> datetime.date:
 
 
 if __name__ == '__main__':
-    DEFAULT_OUTPUT_FILE: str = 'tvspielfilm'
-
     parser = argparse.ArgumentParser(
         description="""
 A lean web scraper for TVSpielfilm.de to extract TV program data.
@@ -2405,26 +2418,26 @@ supports caching with manual conditional fetching, parallel fetching,
 and handles rate limiting with exponential backoff.
 """,
         formatter_class=RawTextHelpFormatter,
-        epilog="""
+        epilog=f'''
 Examples:
   Scrape today's program for all channels and save as XMLTV:
-    python3 tvs-scraper.py
+    tvs-scraper
 
   Scrape program for ARD and ZDF for the next 3 days as JSON:
-    python3 tvs-scraper.py --channel-ids ARD,ZDF --days 3 --output-format json
+    tvs-scraper --channel-ids ARD,ZDF --days 3 --output-format json
 
   List all available channels:
-    python3 tvs-scraper.py --list-channels
+    tvs-scraper --list-channels
 
   Scrape program for a specific date with debug logging:
-    python3 tvs-scraper.py --date 20250523 --log-verbose
+    tvs-scraper --date {(datetime.now() + timedelta(days=2)).strftime("%Y%m%d")} --log-verbose
 
   Clear the entire cache before scraping:
-    python3 tvs-scraper.py --cache-clear
+    tvs-scraper --cache-clear
 
-  Scrape program for today and output XMLTV with Europe/Berlin timezone:
-    python3 tvs-scraper.py --xmltv-timezone Europe/Berlin
-"""
+  Scrape program for today and output XMLTV with America/New_York timezone:
+    tvs-scraper --xmltv-timezone "America/New_York"
+'''
     )
 
     parser.add_argument(
@@ -2447,7 +2460,7 @@ Examples:
         '--date',
         type=validate_date,
         dest='start_date_obj',
-        help='Specific date to scrape in YYYYMMDD format (e.g., 20250523).\nIf specified, only this date will be scraped and --days will be ignored.'
+        help=f'Specific date to scrape in YYYYMMDD format (e.g., {(datetime.now() + timedelta(days=2)).strftime("%Y%m%d")}).\nIf specified, only this date will be scraped and --days will be ignored.'
     )
     parser.add_argument(
         '--days',
@@ -2466,7 +2479,7 @@ Examples:
         '--output-file',
         type=str,
         default=DEFAULT_OUTPUT_FILE,
-        help=f'Output file to which the collected data is written.\nThe default output path is the current working directory.\nDefault: "{os.path.join(os.getcwd(), f"{DEFAULT_OUTPUT_FILE}{".xml" if DEFAULT_OUTPUT_FORMAT == "xmltv" else ".json"}")}"'
+        help=f'Output file to which the collected data is written.\nThe default output path is the current working directory.\nDefault: "{_get_default_output_path()}"'
     )
     parser.add_argument(
         '--output-format',
@@ -2478,8 +2491,8 @@ Examples:
     parser.add_argument(
         '--xmltv-timezone',
         type=str,
-        default='Europe/Berlin',
-        help='Specifies the timezone to use for XMLTV output (e.g., "Europe/Berlin", "America/New_York").\nThis affects the timestamps in the XMLTV file.\nDefault: "Europe/Berlin"'
+        default=DEFAULT_TIMEZONE,
+        help=f'Specifies the timezone to use for XMLTV output (e.g., "America/New_York").\nThis affects the timestamps in the XMLTV file.\nDefault: {DEFAULT_TIMEZONE}'
     )
     parser.add_argument(
         '--img-size',
@@ -2519,7 +2532,7 @@ Examples:
         type=str,
         default=DEFAULT_SYSLOG_TAG,
         dest='syslog_tag',
-        help=f'Identifier (tag) for Syslog messages.\nDefault: "{DEFAULT_SYSLOG_TAG}"'
+        help=f'Identifier (tag) for Syslog messages.\nDefault: {DEFAULT_SYSLOG_TAG}'
     )
 
     parser.add_argument(
@@ -2702,10 +2715,10 @@ Examples:
     default_output_file_arg: str = parser.get_default('output_file')
     output_filename: str = args.output_file
 
-    if args.output_format == 'json':
-        if output_filename == default_output_file_arg and not output_filename.endswith('.json'):
-            output_filename = f"{output_filename}.json"
+    if output_filename == DEFAULT_OUTPUT_FILE:
+        output_filename = _get_default_output_path(args.output_format)
 
+    if args.output_format == 'json':
         logger.info(f"Writing items to {output_filename} in JSON array format.")
         try:
             with open(output_filename, 'w', encoding='utf-8') as f:
@@ -2719,9 +2732,6 @@ Examples:
             sys.exit(1)
 
     elif args.output_format == 'xmltv':
-        if output_filename == default_output_file_arg and not output_filename.endswith('.xml'):
-            output_filename = f"{output_filename}.xml"
-
         try:
             generate_xmltv(extracted_data, output_filename, scraper.xmltv_timezone)
         except Exception as e:
