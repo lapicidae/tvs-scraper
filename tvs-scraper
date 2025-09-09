@@ -1766,8 +1766,7 @@ class TvsLeanScraper:
                 logger.debug("Channel day cache not found or unreadable. Performing full fetch.")
 
         if not items_for_day:
-            # Only perform a fetch if in force update window
-            if force_update:
+            if force_update or cached_data is None:
                 schedule_url: str = self._build_schedule_url(channel_url, current_date)
                 for attempt in range(self.max_schedule_retries + 1):
                     if self.stop_event.is_set():
