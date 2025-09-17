@@ -1848,8 +1848,12 @@ class TvsLeanScraper:
                 if item_data.get('link'):
                     if not self.enable_cache or self.cache_clear_requested:
                         needs_detail_fetch = True
-                    elif force_update and not self._is_cache_fresh(item_data.get('detail_cached_at')):
-                        needs_detail_fetch = True
+                    else:
+                        detail_cache_timestamp = item_data.get('detail_cached_at')
+                        if detail_cache_timestamp is None:
+                            needs_detail_fetch = True
+                        elif force_update and not self._is_cache_fresh(detail_cache_timestamp):
+                            needs_detail_fetch = True
 
                 needs_image_check_standalone = False
                 if self.check_image and item_data.get('image_url') and not needs_detail_fetch:
